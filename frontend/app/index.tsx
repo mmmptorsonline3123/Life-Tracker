@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { ScrollView, StyleSheet, Text, View, RefreshControl, TouchableOpacity, Pressable } from 'react-native';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
+import { Animated, Easing, ScrollView, StyleSheet, Text, View, RefreshControl, TouchableOpacity, Pressable } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Flame, Sparkles, CheckSquare, Repeat, IndianRupee, Droplet, Bell, BarChart2 } from 'lucide-react-native';
 import ScreenContainer from '../components/ScreenContainer';
@@ -67,6 +67,11 @@ export default function HomeScreen() {
           <Text style={styles.clock} testID="home-clock">{timeStr}</Text>
           <Text style={styles.date}>{dateStr}</Text>
         </View>
+
+        {/* Wake word indicator — only visible when Hey Aura mode is on */}
+        {v.wakeMode && (
+          <WakeWordIndicator isProcessing={v.isProcessing} isRecording={v.isRecording} />
+        )}
 
         {/* Streak */}
         <View style={styles.streakRow}>
@@ -185,6 +190,90 @@ function StatCard({ icon, label, value, testID }: any) {
   );
 }
 
+// ── Wake Word Indicator ────────────────────────────────────────────────────────
+function WakeWordIndicator({ isProcessing, isRecording }: { isProcessing: boolean; isRecording: boolean }) {
+  const ring1 = useRef(new Animated.Value(0)).current;
+  const ring2 = useRef(new Animated.Value(0)).current;
+  const slideY = useRef(new Animated.Value(-12)).current;
+  const fade   = useRef(new Animated.Value(0)).current;
+  const loop1  = useRef<Animated.CompositeAnimation | null>(null);
+  const loop2  = useRef<Animated.CompositeAnimation | null>(null);
+
+  useEffect(() => {
+    // Slide + fade in on mount
+    Animated.parallel([
+      Animated.spring(slideY, { toValue: 0, useNativeDriver: true, damping: 14, stiffness: 120 }),
+      Animated.timing(fade,   { toValue: 1, duration: 280, useNativeDriver: true }),
+    ]).start();
+
+    // Ring-1: pulse immediately
+    loop1.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(ring1, { toValue: 1, duration: 1500, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.timing(ring1, { toValue: 0, duration: 0,    useNativeDriver: true }),
+      ])
+    );
+    loop1.current.start();
+
+    // Ring-2: pulse with 750ms offset for stagger
+    const t = setTimeout(() => {
+      loop2.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(ring2, { toValue: 1, duration: 1500, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(ring2, { toValue: 0, duration: 0,    useNativeDriver: true }),
+        ])
+      );
+      loop2.current.start();
+    }, 750);
+
+    return () => {
+      clearTimeout(t);
+      loop1.current?.stop();
+      loop2.current?.stop();
+    };
+  }, []);
+
+  const ring1Style = {
+    transform: [{ scale: ring1.interpolate({ inputRange: [0, 1], outputRange: [1, 3] }) }],
+    opacity:             ring1.interpolate({ inputRange: [0, 0.2, 1], outputRange: [0.45, 0.25, 0] }),
+  };
+  const ring2Style = {
+    transform: [{ scale: ring2.interpolate({ inputRange: [0, 1], outputRange: [1, 3] }) }],
+    opacity:             ring2.interpolate({ inputRange: [0, 0.2, 1], outputRange: [0.45, 0.25, 0] }),
+  };
+
+  const label = isProcessing ? 'Processing…' : isRecording ? 'Recording…' : 'Listening for wake word…';
+
+  return (
+    <Animated.View
+      style={[styles.wakeWrap, { opacity: fade, transform: [{ translateY: slideY }] }]}
+      testID="wake-indicator"
+    >
+      {/* Pulsing dot */}
+      <View style={styles.wakeDotWrap}>
+        <Animated.View style={[styles.wakeRing, ring1Style]} />
+        <Animated.View style={[styles.wakeRing, ring2Style]} />
+        <View style={[styles.wakeDot, isRecording || isProcessing ? styles.wakeDotActive : null]} />
+      </View>
+
+      {/* Text */}
+      <View style={{ flex: 1 }}>
+        <Text style={styles.wakeTitle}>Hey Aura</Text>
+        <Text style={styles.wakeSub}>{label}</Text>
+      </View>
+
+      {/* Mic wave bars — visible while recording */}
+      {isRecording && (
+        <View style={styles.waveBars}>
+          {[0.5, 1, 0.7, 0.9, 0.4].map((h, i) => (
+            <View key={i} style={[styles.waveBar, { height: 14 * h, opacity: 0.6 + i * 0.08 }]} />
+          ))}
+        </View>
+      )}
+    </Animated.View>
+  );
+}
+
 const styles = StyleSheet.create({
   content: { padding: 20 },
   header: { marginBottom: 24 },
@@ -274,4 +363,60 @@ const styles = StyleSheet.create({
   insightsTitle: { fontSize: 16, fontWeight: '700', color: Colors.textPrimary },
   insightsSub: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
   insightsArrow: { fontSize: 18, color: Colors.primary, fontWeight: '600' },
+  // ── Wake Word Indicator styles ───────────────────────────────────────────────
+  wakeWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: '#E9F2EC',
+    borderRadius: Radius.card,
+    borderWidth: 1,
+    borderColor: '#BCD5C5',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  wakeDotWrap: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  wakeRing: {
+    position: 'absolute',
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.success,
+  },
+  wakeDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.success,
+  },
+  wakeDotActive: {
+    backgroundColor: Colors.terracotta,
+  },
+  wakeTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  wakeSub: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    marginTop: 1,
+  },
+  waveBars: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  waveBar: {
+    width: 3,
+    borderRadius: 2,
+    backgroundColor: Colors.success,
+  },
 });
