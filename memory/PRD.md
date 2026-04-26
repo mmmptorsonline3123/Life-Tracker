@@ -61,20 +61,22 @@ Home · Tasks · Habits · Money · Health · Alerts · Journal · Calendar · A
 - Transcribe: POST /transcribe (Whisper, multipart/form-data)
 - TTS: POST /tts (OpenAI TTS-1, returns audio_b64)
 
-## Testing (Iteration 3 — Feb 2026)
-- 77 backend tests — all passing (100%)
+## Testing (Iteration 4 — Feb 2026)
+- 21 backend tests for insights endpoint — all passing (100%)
 - Full frontend UI verification — all passing (100%)
-- Transcription 422 bug: FIXED (FileSystem.uploadAsync)
+- Bug fixed: db.mood → db.moods in insights endpoint (motor phantom collection)
+- AppState wake word listener verified (ref pattern, no TDZ issues)
+- Insights charts: 4 charts (habits %, expenses, water, calories) with week/month toggle
 - See /app/memory/test_credentials.md for seeded session token
 
 ## Backlog
 ### P1 (Near-term)
-- Verify "Hey Aura" continuous wake-word listening on real device
+- Test "Hey Aura" continuous wake-word listening on real physical device with Expo Go
 - Verify data isolation across multiple real Google accounts
 
 ### P2 (Medium-term)
-- Weekly/monthly insight charts
-- Smart suggestions from AI based on patterns
+- Smart daily AI insights notifications (morning summaries)
+- Mood trend chart in Insights screen
 
 ### P3 (Future)
 - Export day journal as PDF
