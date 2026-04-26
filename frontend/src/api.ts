@@ -1,5 +1,7 @@
 // Lightweight API client with session token auth
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '';
 const TOKEN_KEY = 'aura_session_token';
@@ -103,11 +105,11 @@ export const api = {
   history: (date: string) => request(`/history/${date}`),
   historyActiveDates: (yearMonth: string) => request(`/history/active-dates/${yearMonth}`),
 
-  // transcribe
+  // transcribe — uses FileSystem.uploadAsync on native (rock-solid multipart),
+  // falls back to fetch+FormData on web
   transcribe: async (uri: string): Promise<{ text: string }> => {
     const token = await getToken();
     if (!uri) throw new Error('No audio recorded');
-    // Derive name/type from URI extension
     const m = uri.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
     const ext = (m?.[1] || 'm4a').toLowerCase();
     const mimeMap: Record<string, string> = {
@@ -116,8 +118,29 @@ export const api = {
       webm: 'audio/webm', ogg: 'audio/ogg', caf: 'audio/x-caf',
     };
     const type = mimeMap[ext] || 'audio/m4a';
+
+    if (Platform.OS !== 'web') {
+      const result = await FileSystem.uploadAsync(`${BASE}/api/transcribe`, uri, {
+        httpMethod: 'POST',
+        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+        fieldName: 'file',
+        mimeType: type,
+        parameters: {},
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (result.status < 200 || result.status >= 300) {
+        throw new Error(`Transcribe ${result.status}: ${(result.body || '').slice(0, 120)}`);
+      }
+      try {
+        return JSON.parse(result.body || '{}');
+      } catch {
+        return { text: '' };
+      }
+    }
+
+    // Web fallback
     const form = new FormData();
-    // @ts-ignore — RN FormData accepts file descriptor object
+    // @ts-ignore
     form.append('file', { uri, name: `audio.${ext}`, type });
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
