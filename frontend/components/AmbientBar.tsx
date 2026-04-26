@@ -1,12 +1,14 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, TouchableOpacity, View, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Mic, MicOff, Volume2, VolumeX, Loader } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
+import { Mic, MicOff, Volume2, VolumeX, Loader, Settings, Sparkles } from 'lucide-react-native';
 import { Colors, Radius } from '../src/theme';
 import { useVoice } from '../src/VoiceContext';
 
 export default function AmbientBar() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const v = useVoice();
   const pulse = useRef(new Animated.Value(0)).current;
   const slide = useRef(new Animated.Value(-100)).current;
@@ -40,8 +42,9 @@ export default function AmbientBar() {
 
   let displayText = 'Tap mic to talk';
   if (v.isProcessing) displayText = 'Thinking…';
-  else if (v.isRecording) displayText = v.transcript || 'Listening…';
+  else if (v.isRecording) displayText = v.transcript || (v.wakeMode ? 'Say "Hey Aura"…' : 'Listening…');
   else if (v.transcript) displayText = `“${v.transcript}”`;
+  else if (v.wakeMode) displayText = 'Hey Aura · always listening';
   else if (v.handsFree) displayText = 'Hands-free on';
 
   return (
@@ -66,12 +69,15 @@ export default function AmbientBar() {
           style={[
             styles.micBtn,
             v.isRecording && { backgroundColor: Colors.terracotta },
-            v.handsFree && !v.isRecording && { backgroundColor: Colors.ochre },
+            !v.isRecording && v.wakeMode && { backgroundColor: Colors.terracotta },
+            v.handsFree && !v.isRecording && !v.wakeMode && { backgroundColor: Colors.ochre },
           ]}
           testID="ambient-mic-btn"
         >
           {v.isProcessing ? (
             <Loader size={18} color="#fff" />
+          ) : v.wakeMode && !v.isRecording ? (
+            <Sparkles size={18} color="#fff" />
           ) : v.isRecording ? (
             <Mic size={18} color="#fff" />
           ) : (
@@ -89,6 +95,14 @@ export default function AmbientBar() {
           ) : (
             <VolumeX size={18} color={Colors.textTertiary} />
           )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => router.push('/settings' as any)}
+          style={styles.ttsBtn}
+          testID="ambient-settings-btn"
+        >
+          <Settings size={18} color={Colors.primary} />
         </TouchableOpacity>
       </View>
     </Animated.View>
@@ -133,8 +147,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   ttsBtn: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     borderRadius: 9999,
     alignItems: 'center',
     justifyContent: 'center',

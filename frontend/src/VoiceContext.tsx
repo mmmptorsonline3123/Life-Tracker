@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import * as Speech from 'expo-speech';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   useAudioRecorder,
   useAudioRecorderState,
@@ -13,6 +14,21 @@ import { api } from './api';
 import { parseCommand } from './voice';
 
 type ToastFn = (msg: string) => void;
+type Voice = Speech.Voice;
+
+const SETTINGS_KEY = 'aura_settings_v1';
+const WAKE_WORDS = ['hey aura', 'hi aura', 'okay aura', 'ok aura', 'hey ora', 'hey aurora'];
+
+function stripWakeWord(text: string): string | null {
+  const lower = (text || '').toLowerCase().trim();
+  for (const w of WAKE_WORDS) {
+    const idx = lower.indexOf(w);
+    if (idx !== -1) {
+      return lower.slice(idx + w.length).replace(/^[\s,.:;!?]+/, '').trim();
+    }
+  }
+  return null;
+}
 
 type VoiceCtx = {
   isRecording: boolean;
@@ -21,6 +37,13 @@ type VoiceCtx = {
   ttsEnabled: boolean;
   transcript: string;
   lastReply: string;
+  // settings
+  voices: Voice[];
+  voiceId: string | null;
+  wakeMode: boolean;
+  setVoiceId: (id: string | null) => Promise<void>;
+  setWakeMode: (on: boolean) => Promise<void>;
+  // actions
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
   toggleMic: () => Promise<void>;
@@ -49,12 +72,50 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
   const [transcript, setTranscript] = useState('');
   const [lastReply, setLastReply] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+
+  const [voices, setVoices] = useState<Voice[]>([]);
+  const [voiceId, setVoiceIdState] = useState<string | null>(null);
+  const [wakeMode, setWakeModeState] = useState(false);
+
   const handsFreeRef = useRef(false);
+  const wakeModeRef = useRef(false);
   const isProcessingRef = useRef(false);
   const toastRef = useRef<ToastFn>(() => {});
   const dataChangeRef = useRef<() => void>(() => {});
+  const voiceIdRef = useRef<string | null>(null);
 
-  // Request permission once
+  // Load settings
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(SETTINGS_KEY);
+        if (raw) {
+          const s = JSON.parse(raw);
+          if (s.voiceId) {
+            setVoiceIdState(s.voiceId);
+            voiceIdRef.current = s.voiceId;
+          }
+          if (typeof s.wakeMode === 'boolean') {
+            setWakeModeState(s.wakeMode);
+            wakeModeRef.current = s.wakeMode;
+          }
+          if (typeof s.ttsEnabled === 'boolean') setTtsEnabled(s.ttsEnabled);
+        }
+      } catch {}
+    })();
+  }, []);
+
+  // Load available TTS voices
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await Speech.getAvailableVoicesAsync();
+        setVoices(list || []);
+      } catch {}
+    })();
+  }, []);
+
+  // Audio permission
   useEffect(() => {
     (async () => {
       try {
@@ -64,10 +125,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
         }
         const status = await AudioModule.requestRecordingPermissionsAsync();
         if (status.granted) {
-          await setAudioModeAsync({
-            allowsRecording: true,
-            playsInSilentMode: true,
-          });
+          await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
           setPermGranted(true);
         }
       } catch (e) {
@@ -76,26 +134,60 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
+  const persist = useCallback(async (patch: any) => {
+    try {
+      const raw = await AsyncStorage.getItem(SETTINGS_KEY);
+      const cur = raw ? JSON.parse(raw) : {};
+      const next = { ...cur, ...patch };
+      await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+    } catch {}
+  }, []);
+
   const speak = useCallback(
     (text: string) => {
       if (!ttsEnabled || !text) return;
       try {
         Speech.stop();
-        Speech.speak(text, { rate: 1.0, pitch: 1.0, language: 'en-US' });
+        Speech.speak(text, {
+          rate: 1.0,
+          pitch: 1.0,
+          language: 'en-US',
+          voice: voiceIdRef.current || undefined,
+        });
       } catch {}
     },
     [ttsEnabled]
   );
 
-  const setToast = useCallback((fn: ToastFn) => {
-    toastRef.current = fn;
-  }, []);
-  const setOnDataChange = useCallback((fn: () => void) => {
-    dataChangeRef.current = fn;
-  }, []);
+  const setVoiceId = useCallback(
+    async (id: string | null) => {
+      voiceIdRef.current = id;
+      setVoiceIdState(id);
+      await persist({ voiceId: id });
+    },
+    [persist]
+  );
+
+  const setWakeMode = useCallback(
+    async (on: boolean) => {
+      wakeModeRef.current = on;
+      setWakeModeState(on);
+      await persist({ wakeMode: on });
+      // turning wake mode on should auto-start hands-free listening
+      if (on && !handsFreeRef.current) {
+        handsFreeRef.current = true;
+        setHandsFree(true);
+        await startRecordingInternal();
+      }
+    },
+    [persist]
+  );
+
+  const setToast = useCallback((fn: ToastFn) => { toastRef.current = fn; }, []);
+  const setOnDataChange = useCallback((fn: () => void) => { dataChangeRef.current = fn; }, []);
 
   const handleParsed = useCallback(
-    async (raw: string) => {
+    async (raw: string, fromWake = false) => {
       const cmd = parseCommand(raw);
       let resultMsg = '';
       try {
@@ -160,7 +252,10 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
           }
           case 'turn_off_voice':
             handsFreeRef.current = false;
+            wakeModeRef.current = false;
             setHandsFree(false);
+            setWakeModeState(false);
+            await persist({ wakeMode: false });
             resultMsg = 'Hands-free off';
             break;
           case 'memory_query': {
@@ -170,8 +265,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
           }
           case 'unknown':
           default: {
-            // Treat as memory query if hands-free is on
-            if (handsFreeRef.current && raw.trim().length > 2) {
+            if ((handsFreeRef.current || fromWake) && raw.trim().length > 2) {
               const r: any = await api.chat(raw);
               resultMsg = r.reply || '...';
             } else {
@@ -188,35 +282,8 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
       speak(resultMsg);
       try { dataChangeRef.current(); } catch {}
     },
-    [router, speak]
+    [router, speak, persist]
   );
-
-  const stopRecording = useCallback(async () => {
-    if (isProcessingRef.current) return;
-    try {
-      if (!recState.isRecording) return;
-      await recorder.stop();
-      const uri = recorder.uri;
-      if (!uri) return;
-      isProcessingRef.current = true;
-      setIsProcessing(true);
-      const r = await api.transcribe(uri);
-      const text = (r.text || '').trim();
-      setTranscript(text);
-      if (text) await handleParsed(text);
-    } catch (e) {
-      console.warn('stop/transcribe error', e);
-    } finally {
-      isProcessingRef.current = false;
-      setIsProcessing(false);
-      // hands-free: auto-restart
-      if (handsFreeRef.current) {
-        setTimeout(() => {
-          startRecordingInternal().catch(() => {});
-        }, 600);
-      }
-    }
-  }, [recorder, recState.isRecording, handleParsed]);
 
   const startRecordingInternal = useCallback(async () => {
     if (!permGranted) {
@@ -233,6 +300,50 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [permGranted, recorder, recState.isRecording]);
 
+  const stopRecording = useCallback(async () => {
+    if (isProcessingRef.current) return;
+    try {
+      if (!recState.isRecording) return;
+      await recorder.stop();
+      const uri = recorder.uri;
+      if (!uri) return;
+      isProcessingRef.current = true;
+      setIsProcessing(true);
+      const r = await api.transcribe(uri);
+      const text = (r.text || '').trim();
+      setTranscript(text);
+
+      if (!text) {
+        // empty transcript — keep silent
+      } else if (wakeModeRef.current) {
+        const after = stripWakeWord(text);
+        if (after !== null) {
+          // Wake word detected — process the rest
+          if (after) {
+            await handleParsed(after, true);
+          } else {
+            // just "hey aura" with nothing after — acknowledge
+            const greeting = 'Yes? How can I help?';
+            setLastReply(greeting);
+            toastRef.current(greeting);
+            speak(greeting);
+          }
+        }
+        // else: ignore (no wake word, stay listening silently)
+      } else {
+        await handleParsed(text);
+      }
+    } catch (e) {
+      console.warn('stop/transcribe error', e);
+    } finally {
+      isProcessingRef.current = false;
+      setIsProcessing(false);
+      if (handsFreeRef.current) {
+        setTimeout(() => { startRecordingInternal().catch(() => {}); }, 600);
+      }
+    }
+  }, [recorder, recState.isRecording, handleParsed, speak]);
+
   const startRecording = startRecordingInternal;
 
   const toggleMic = useCallback(async () => {
@@ -246,7 +357,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     setHandsFree(next);
     if (next) {
       await startRecording();
-      speak('Hands-free on. I am listening.');
+      speak(wakeModeRef.current ? 'Wake mode on. Say hey Aura to start.' : 'Hands-free on. I am listening.');
     } else {
       if (recState.isRecording) await stopRecording();
       speak('Hands-free off.');
@@ -255,10 +366,12 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
 
   const toggleTTS = useCallback(() => {
     setTtsEnabled((p) => {
+      const next = !p;
       if (p) Speech.stop();
-      return !p;
+      persist({ ttsEnabled: next });
+      return next;
     });
-  }, []);
+  }, [persist]);
 
   const value: VoiceCtx = {
     isRecording: recState.isRecording,
@@ -267,6 +380,11 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     ttsEnabled,
     transcript,
     lastReply,
+    voices,
+    voiceId,
+    wakeMode,
+    setVoiceId,
+    setWakeMode,
     startRecording,
     stopRecording,
     toggleMic,

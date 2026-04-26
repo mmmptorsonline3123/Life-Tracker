@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { useRouter } from 'expo-router';
+import { usePathname } from 'expo-router';
 import { Stack } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -50,6 +50,12 @@ function VoiceToastBridge() {
   return null;
 }
 
+function ConditionalAmbientBar() {
+  const path = usePathname();
+  if (path === '/settings') return null;
+  return <AmbientBar />;
+}
+
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
@@ -66,7 +72,7 @@ export default function RootLayout() {
                   animation: 'slide_from_right',
                 }}
               />
-              <AmbientBar />
+              <ConditionalAmbientBar />
             </View>
             <StatusBar style="dark" />
           </VoiceProvider>
