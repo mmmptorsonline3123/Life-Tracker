@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Check, Volume2, Sparkles, LogOut, User } from 'lucide-react-native';
 import { Colors, Radius } from '../src/theme';
-import { useVoice } from '../src/VoiceContext';
+import { useVoice, TTS_VOICES } from '../src/VoiceContext';
 import { useAuth } from '../src/AuthContext';
 
 export default function SettingsScreen() {
@@ -14,15 +14,10 @@ export default function SettingsScreen() {
   const { user, signOut } = useAuth();
   const [previewing, setPreviewing] = useState<string | null>(null);
 
-  const englishVoices = (v.voices || []).filter((vc) =>
-    (vc.language || '').toLowerCase().startsWith('en')
-  );
-
-  const previewVoice = async (id: string) => {
+  const previewVoice = (id: string) => {
     setPreviewing(id);
-    await v.setVoiceId(id);
-    v.speak('Hi, I am Aura. This is how I sound.');
-    setTimeout(() => setPreviewing(null), 2500);
+    v.previewVoice(id);
+    setTimeout(() => setPreviewing(null), 3000);
   };
 
   return (
@@ -99,7 +94,7 @@ export default function SettingsScreen() {
             <Volume2 size={20} color={Colors.primary} />
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={styles.rowTitle}>Spoken responses</Text>
-              <Text style={styles.rowSub}>Aura speaks back every confirmation.</Text>
+              <Text style={styles.rowSub}>Aura speaks back every confirmation in a natural voice.</Text>
             </View>
             <Switch
               value={v.ttsEnabled}
@@ -111,54 +106,35 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Voice picker */}
+        {/* Voice picker — OpenAI voices */}
         <Text style={styles.sectionLabel}>Assistant voice</Text>
-        <Text style={styles.helper}>Tap a voice to preview. Available voices come from your device.</Text>
+        <Text style={styles.helper}>Tap to preview. Powered by OpenAI's natural-sounding voices.</Text>
 
-        <Pressable
-          onPress={() => previewVoice('')}
-          style={[styles.voiceRow, !v.voiceId && styles.voiceRowActive]}
-          testID="voice-default"
-        >
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.voiceName, !v.voiceId && { color: '#F9F9F6' }]}>System default</Text>
-            <Text style={[styles.voiceMeta, !v.voiceId && { color: '#F9F9F6', opacity: 0.7 }]}>
-              Use your phone's default voice
-            </Text>
-          </View>
-          {!v.voiceId && <Check size={18} color="#F9F9F6" strokeWidth={2.5} />}
-        </Pressable>
-
-        {englishVoices.length === 0 ? (
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>No installed voices found on this device.</Text>
-          </View>
-        ) : (
-          englishVoices.map((vc) => {
-            const active = v.voiceId === vc.identifier;
-            const previewingNow = previewing === vc.identifier;
-            return (
-              <Pressable
-                key={vc.identifier}
-                onPress={() => previewVoice(vc.identifier)}
-                style={[styles.voiceRow, active && styles.voiceRowActive]}
-                testID={`voice-${vc.identifier}`}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.voiceName, active && { color: '#F9F9F6' }]}>
-                    {vc.name || vc.identifier}
-                  </Text>
-                  <Text style={[styles.voiceMeta, active && { color: '#F9F9F6', opacity: 0.7 }]}>
-                    {(vc.language || '').toUpperCase()}
-                    {vc.quality ? ` · ${vc.quality}` : ''}
-                    {previewingNow ? ' · playing…' : ''}
-                  </Text>
-                </View>
-                {active && <Check size={18} color="#F9F9F6" strokeWidth={2.5} />}
-              </Pressable>
-            );
-          })
-        )}
+        {TTS_VOICES.map((vc) => {
+          const active = v.voiceId === vc.id;
+          const previewingNow = previewing === vc.id;
+          return (
+            <Pressable
+              key={vc.id}
+              onPress={async () => {
+                await v.setVoiceId(vc.id);
+                previewVoice(vc.id);
+              }}
+              style={[styles.voiceRow, active && styles.voiceRowActive]}
+              testID={`voice-${vc.id}`}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.voiceName, active && { color: '#F9F9F6' }]}>
+                  {vc.name}
+                </Text>
+                <Text style={[styles.voiceMeta, active && { color: '#F9F9F6', opacity: 0.7 }]}>
+                  {vc.desc}{previewingNow ? ' · playing…' : ''}
+                </Text>
+              </View>
+              {active && <Check size={18} color="#F9F9F6" strokeWidth={2.5} />}
+            </Pressable>
+          );
+        })}
       </ScrollView>
     </View>
   );
@@ -202,8 +178,6 @@ const styles = StyleSheet.create({
   voiceRowActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   voiceName: { fontSize: 15, fontWeight: '600', color: Colors.textPrimary },
   voiceMeta: { fontSize: 12, color: Colors.textSecondary, marginTop: 4 },
-  empty: { padding: 20, alignItems: 'center' },
-  emptyText: { color: Colors.textSecondary, fontSize: 13 },
   avatar: {
     width: 44, height: 44, borderRadius: 9999,
     backgroundColor: Colors.surface2, alignItems: 'center', justifyContent: 'center',

@@ -106,15 +106,34 @@ export const api = {
   // transcribe
   transcribe: async (uri: string): Promise<{ text: string }> => {
     const token = await getToken();
+    if (!uri) throw new Error('No audio recorded');
+    // Derive name/type from URI extension
+    const m = uri.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
+    const ext = (m?.[1] || 'm4a').toLowerCase();
+    const mimeMap: Record<string, string> = {
+      m4a: 'audio/m4a', mp3: 'audio/mpeg', mp4: 'audio/mp4',
+      wav: 'audio/wav', aac: 'audio/aac', '3gp': 'audio/3gpp',
+      webm: 'audio/webm', ogg: 'audio/ogg', caf: 'audio/x-caf',
+    };
+    const type = mimeMap[ext] || 'audio/m4a';
     const form = new FormData();
-    // @ts-ignore
-    form.append('file', { uri, name: 'audio.m4a', type: 'audio/m4a' });
+    // @ts-ignore — RN FormData accepts file descriptor object
+    form.append('file', { uri, name: `audio.${ext}`, type });
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
     const res = await fetch(`${BASE}/api/transcribe`, {
       method: 'POST',
       body: form as any,
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      headers,
     });
-    if (!res.ok) throw new Error(`Transcribe failed: ${res.status}`);
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(`Transcribe ${res.status}: ${t.slice(0, 120)}`);
+    }
     return res.json();
   },
+
+  // tts (OpenAI)
+  tts: (text: string, voice?: string) =>
+    request('/tts', { method: 'POST', body: JSON.stringify({ text, voice: voice || 'nova' }) }),
 };

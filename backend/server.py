@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
-from emergentintegrations.llm.openai import OpenAISpeechToText
+from emergentintegrations.llm.openai import OpenAISpeechToText, OpenAITextToSpeech
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -785,6 +785,8 @@ async def transcribe(file: UploadFile = File(...), user: dict = Depends(get_curr
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     try:
         contents = await file.read()
+        if not contents or len(contents) < 1024:
+            return {"text": ""}
         tmp.write(contents)
         tmp.close()
         stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
@@ -800,6 +802,37 @@ async def transcribe(file: UploadFile = File(...), user: dict = Depends(get_curr
             os.unlink(tmp.name)
         except Exception:
             pass
+
+
+# ============== TTS (OpenAI) ==============
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: Optional[str] = "nova"  # alloy, ash, coral, echo, fable, nova, onyx, sage, shimmer
+    model: Optional[str] = "tts-1"
+    speed: Optional[float] = 1.05
+
+
+@api_router.post("/tts")
+async def tts_generate(payload: TTSRequest, user: dict = Depends(get_current_user)):
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Empty text")
+    text = text[:4000]
+    try:
+        tts = OpenAITextToSpeech(api_key=EMERGENT_LLM_KEY)
+        audio_b64 = await tts.generate_speech_base64(
+            text=text,
+            model=payload.model or "tts-1",
+            voice=payload.voice or "nova",
+            speed=payload.speed or 1.05,
+        )
+        return {"audio_b64": audio_b64, "format": "mp3"}
+    except Exception as e:
+        logging.exception("TTS error")
+        raise HTTPException(500, f"TTS failed: {str(e)}")
 
 
 @api_router.get("/")

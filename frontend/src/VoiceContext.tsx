@@ -2,22 +2,36 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { Platform } from 'react-native';
 import * as Speech from 'expo-speech';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
 import {
   useAudioRecorder,
   useAudioRecorderState,
   setAudioModeAsync,
   AudioModule,
   RecordingPresets,
+  createAudioPlayer,
 } from 'expo-audio';
 import { useRouter } from 'expo-router';
 import { api } from './api';
 import { parseCommand } from './voice';
 
 type ToastFn = (msg: string) => void;
-type Voice = Speech.Voice;
 
 const SETTINGS_KEY = 'aura_settings_v1';
 const WAKE_WORDS = ['hey aura', 'hi aura', 'okay aura', 'ok aura', 'hey ora', 'hey aurora'];
+
+// OpenAI TTS voices (high quality, natural)
+export const TTS_VOICES = [
+  { id: 'nova', name: 'Nova', desc: 'Energetic, upbeat' },
+  { id: 'shimmer', name: 'Shimmer', desc: 'Bright, cheerful' },
+  { id: 'coral', name: 'Coral', desc: 'Warm, friendly' },
+  { id: 'sage', name: 'Sage', desc: 'Wise, measured' },
+  { id: 'alloy', name: 'Alloy', desc: 'Neutral, balanced' },
+  { id: 'echo', name: 'Echo', desc: 'Smooth, calm' },
+  { id: 'fable', name: 'Fable', desc: 'Expressive, storytelling' },
+  { id: 'onyx', name: 'Onyx', desc: 'Deep, authoritative' },
+  { id: 'ash', name: 'Ash', desc: 'Clear, articulate' },
+];
 
 function stripWakeWord(text: string): string | null {
   const lower = (text || '').toLowerCase().trim();
@@ -37,19 +51,17 @@ type VoiceCtx = {
   ttsEnabled: boolean;
   transcript: string;
   lastReply: string;
-  // settings
-  voices: Voice[];
-  voiceId: string | null;
+  voiceId: string;
   wakeMode: boolean;
-  setVoiceId: (id: string | null) => Promise<void>;
+  setVoiceId: (id: string) => Promise<void>;
   setWakeMode: (on: boolean) => Promise<void>;
-  // actions
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
   toggleMic: () => Promise<void>;
   toggleHandsFree: () => Promise<void>;
   toggleTTS: () => void;
   speak: (text: string) => void;
+  previewVoice: (id: string) => void;
   setToast: (fn: ToastFn) => void;
   setOnDataChange: (fn: () => void) => void;
 };
@@ -73,16 +85,18 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
   const [lastReply, setLastReply] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const [voices, setVoices] = useState<Voice[]>([]);
-  const [voiceId, setVoiceIdState] = useState<string | null>(null);
+  const [voiceId, setVoiceIdState] = useState<string>('nova');
   const [wakeMode, setWakeModeState] = useState(false);
 
   const handsFreeRef = useRef(false);
   const wakeModeRef = useRef(false);
   const isProcessingRef = useRef(false);
+  const recordStartRef = useRef<number>(0);
   const toastRef = useRef<ToastFn>(() => {});
   const dataChangeRef = useRef<() => void>(() => {});
-  const voiceIdRef = useRef<string | null>(null);
+  const voiceIdRef = useRef<string>('nova');
+  const playerRef = useRef<any>(null);
+  const audioElRef = useRef<any>(null);
 
   // Load settings
   useEffect(() => {
@@ -105,16 +119,6 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  // Load available TTS voices
-  useEffect(() => {
-    (async () => {
-      try {
-        const list = await Speech.getAvailableVoicesAsync();
-        setVoices(list || []);
-      } catch {}
-    })();
-  }, []);
-
   // Audio permission
   useEffect(() => {
     (async () => {
@@ -127,6 +131,8 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
         if (status.granted) {
           await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
           setPermGranted(true);
+        } else {
+          toastRef.current('Microphone permission denied');
         }
       } catch (e) {
         console.warn('Audio permission error', e);
@@ -143,24 +149,79 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     } catch {}
   }, []);
 
+  const playAudioBase64 = useCallback(async (b64: string) => {
+    if (!b64) return;
+    try {
+      if (Platform.OS === 'web') {
+        // Web: use HTML Audio element with data URI
+        if (audioElRef.current) {
+          try { audioElRef.current.pause(); } catch {}
+        }
+        const audio = new (globalThis as any).Audio(`data:audio/mp3;base64,${b64}`);
+        audioElRef.current = audio;
+        await audio.play();
+      } else {
+        // Native: write to file then play with expo-audio
+        const path = `${FileSystem.cacheDirectory}aura_tts_${Date.now()}.mp3`;
+        await FileSystem.writeAsStringAsync(path, b64, { encoding: FileSystem.EncodingType.Base64 });
+        if (playerRef.current) {
+          try { playerRef.current.remove?.(); } catch {}
+        }
+        const player = createAudioPlayer({ uri: path });
+        playerRef.current = player;
+        player.play();
+      }
+    } catch (e) {
+      console.warn('Audio play error', e);
+    }
+  }, []);
+
   const speak = useCallback(
     (text: string) => {
       if (!ttsEnabled || !text) return;
+      // Stop any ongoing playback first
       try {
         Speech.stop();
-        Speech.speak(text, {
-          rate: 1.0,
-          pitch: 1.0,
-          language: 'en-US',
-          voice: voiceIdRef.current || undefined,
-        });
+        if (playerRef.current) { try { playerRef.current.pause?.(); } catch {} }
+        if (audioElRef.current) { try { audioElRef.current.pause(); } catch {} }
       } catch {}
+      // Try OpenAI TTS via API (high quality, human-like)
+      api.tts(text, voiceIdRef.current)
+        .then((r: any) => {
+          if (r?.audio_b64) {
+            playAudioBase64(r.audio_b64);
+          } else {
+            // fallback to on-device
+            Speech.speak(text, { rate: 1.0, pitch: 1.0, language: 'en-US' });
+          }
+        })
+        .catch(() => {
+          // Network/auth failure → fallback to on-device TTS
+          try { Speech.speak(text, { rate: 1.0, pitch: 1.0, language: 'en-US' }); } catch {}
+        });
     },
-    [ttsEnabled]
+    [ttsEnabled, playAudioBase64]
+  );
+
+  const previewVoice = useCallback(
+    (id: string) => {
+      // Temporarily override voice for preview
+      const prev = voiceIdRef.current;
+      voiceIdRef.current = id;
+      api.tts('Hi, I am Aura. This is how I sound.', id)
+        .then((r: any) => {
+          if (r?.audio_b64) playAudioBase64(r.audio_b64);
+        })
+        .catch(() => {})
+        .finally(() => {
+          voiceIdRef.current = prev;
+        });
+    },
+    [playAudioBase64]
   );
 
   const setVoiceId = useCallback(
-    async (id: string | null) => {
+    async (id: string) => {
       voiceIdRef.current = id;
       setVoiceIdState(id);
       await persist({ voiceId: id });
@@ -173,11 +234,10 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
       wakeModeRef.current = on;
       setWakeModeState(on);
       await persist({ wakeMode: on });
-      // turning wake mode on should auto-start hands-free listening
       if (on && !handsFreeRef.current) {
         handsFreeRef.current = true;
         setHandsFree(true);
-        await startRecordingInternal();
+        try { await startRecordingInternal(); } catch {}
       }
     },
     [persist]
@@ -286,7 +346,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
   );
 
   const startRecordingInternal = useCallback(async () => {
-    if (!permGranted) {
+    if (!permGranted && Platform.OS !== 'web') {
       toastRef.current('Microphone permission required');
       return;
     }
@@ -294,9 +354,10 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     try {
       await recorder.prepareToRecordAsync();
       await recorder.record();
+      recordStartRef.current = Date.now();
       setTranscript('');
-    } catch (e) {
-      console.warn('start recording error', e);
+    } catch (e: any) {
+      toastRef.current(`Mic error: ${e?.message || 'cannot start'}`);
     }
   }, [permGranted, recorder, recState.isRecording]);
 
@@ -304,9 +365,24 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     if (isProcessingRef.current) return;
     try {
       if (!recState.isRecording) return;
+      const recordedMs = Date.now() - (recordStartRef.current || Date.now());
       await recorder.stop();
+      // Wait briefly for URI to be ready on some platforms
+      await new Promise((r) => setTimeout(r, 150));
       const uri = recorder.uri;
-      if (!uri) return;
+
+      if (recordedMs < 500) {
+        toastRef.current('Recording too short');
+        if (handsFreeRef.current) {
+          setTimeout(() => { startRecordingInternal().catch(() => {}); }, 400);
+        }
+        return;
+      }
+      if (!uri) {
+        toastRef.current('No audio captured');
+        return;
+      }
+
       isProcessingRef.current = true;
       setIsProcessing(true);
       const r = await api.transcribe(uri);
@@ -314,27 +390,24 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
       setTranscript(text);
 
       if (!text) {
-        // empty transcript — keep silent
+        if (!handsFreeRef.current) toastRef.current("I didn't hear anything");
       } else if (wakeModeRef.current) {
         const after = stripWakeWord(text);
         if (after !== null) {
-          // Wake word detected — process the rest
           if (after) {
             await handleParsed(after, true);
           } else {
-            // just "hey aura" with nothing after — acknowledge
             const greeting = 'Yes? How can I help?';
             setLastReply(greeting);
             toastRef.current(greeting);
             speak(greeting);
           }
         }
-        // else: ignore (no wake word, stay listening silently)
       } else {
         await handleParsed(text);
       }
-    } catch (e) {
-      console.warn('stop/transcribe error', e);
+    } catch (e: any) {
+      toastRef.current(`Voice error: ${(e?.message || 'failed').slice(0, 80)}`);
     } finally {
       isProcessingRef.current = false;
       setIsProcessing(false);
@@ -342,7 +415,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
         setTimeout(() => { startRecordingInternal().catch(() => {}); }, 600);
       }
     }
-  }, [recorder, recState.isRecording, handleParsed, speak]);
+  }, [recorder, recState.isRecording, handleParsed, speak, startRecordingInternal]);
 
   const startRecording = startRecordingInternal;
 
@@ -367,7 +440,11 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
   const toggleTTS = useCallback(() => {
     setTtsEnabled((p) => {
       const next = !p;
-      if (p) Speech.stop();
+      if (p) {
+        try { Speech.stop(); } catch {}
+        if (playerRef.current) { try { playerRef.current.pause?.(); } catch {} }
+        if (audioElRef.current) { try { audioElRef.current.pause(); } catch {} }
+      }
       persist({ ttsEnabled: next });
       return next;
     });
@@ -380,7 +457,6 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     ttsEnabled,
     transcript,
     lastReply,
-    voices,
     voiceId,
     wakeMode,
     setVoiceId,
@@ -391,6 +467,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     toggleHandsFree,
     toggleTTS,
     speak,
+    previewVoice,
     setToast,
     setOnDataChange,
   };
