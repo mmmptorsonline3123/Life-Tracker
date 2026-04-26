@@ -1,0 +1,178 @@
+{
+  "app_info": {
+    "name": "Aura",
+    "description": "A personal AI assistant for daily life organization covering habits, tasks, expenses, health, and journaling.",
+    "platform": "Expo React Native",
+    "styling_paradigm": "Tailwind (NativeWind) or standard StyleSheet mapped to Tailwind values",
+    "theme": "Light",
+    "archetype": "Archetype 1: Organic & Earthy"
+  },
+  "design_system": {
+    "colors": {
+      "background": "#F9F9F6",
+      "surface_primary": "#FFFFFF",
+      "surface_secondary": "#F0F0EA",
+      "primary": "#1A362D",
+      "primary_hover": "#244A3E",
+      "accent_terracotta": "#C8553D",
+      "accent_ochre": "#F2A65A",
+      "accent_sage": "#8EA694",
+      "text_primary": "#1C1C1A",
+      "text_secondary": "#6B6B63",
+      "text_tertiary": "#A3A39A",
+      "border_subtle": "#E5E5DF",
+      "border_focus": "#1A362D",
+      "success": "#3A7D44",
+      "warning": "#F2A65A",
+      "danger": "#C8553D",
+      "gradient_ai_pulse": ["#C8553D", "#F2A65A", "#8EA694"]
+    },
+    "typography": {
+      "rules": "Avoid Inter/Roboto. Use typographic tension by mixing a classic serif for emotional headers and a geometric sans for UI data.",
+      "font_families": {
+        "heading": "Cormorant Garamond, serif",
+        "body": "Manrope, sans-serif",
+        "mono": "JetBrains Mono, monospace"
+      },
+      "sizes": {
+        "h1": "text-4xl sm:text-5xl tracking-tight leading-none font-medium",
+        "h2": "text-2xl sm:text-3xl tracking-tight leading-snug font-medium",
+        "h3": "text-xl font-semibold",
+        "h4": "text-lg font-medium",
+        "body_large": "text-base leading-relaxed",
+        "body": "text-sm leading-relaxed",
+        "label": "text-xs tracking-[0.05em] uppercase font-bold",
+        "currency_large": "text-4xl font-mono tracking-tighter"
+      }
+    },
+    "spacing_and_layout": {
+      "grid": "8pt system",
+      "screen_padding": "px-6 py-8",
+      "bento_gap": "gap-4",
+      "border_radius": {
+        "card": "rounded-[24px]",
+        "chip": "rounded-full",
+        "button": "rounded-full",
+        "input": "rounded-[16px]"
+      },
+      "shadows": {
+        "ambient": "shadow-[0_8px_32px_rgba(28,28,26,0.04)]",
+        "floating": "shadow-[0_16px_48px_rgba(26,54,45,0.12)]"
+      }
+    },
+    "components": {
+      "cards": {
+        "style": "Flat design, bg-white, 1px border-border_subtle, rounded-[24px]. No drop shadows except for floating elements. Inner padding p-5 or p-6."
+      },
+      "buttons": {
+        "primary": "bg-primary text-background rounded-full py-4 px-6 font-medium text-base active:opacity-80 flex items-center justify-center",
+        "secondary": "bg-surface_secondary text-text_primary rounded-full py-4 px-6 font-medium text-base border border-border_subtle",
+        "fab": "absolute bottom-6 right-6 w-14 h-14 rounded-full bg-primary flex items-center justify-center shadow-floating"
+      },
+      "chips": {
+        "active": "bg-primary text-white rounded-full px-4 py-2 text-sm",
+        "inactive": "bg-surface_secondary text-text_secondary rounded-full px-4 py-2 text-sm border border-border_subtle"
+      },
+      "ambient_listening_bar": {
+        "position": "absolute top-12 left-6 right-6 z-50",
+        "style": "h-12 rounded-full backdrop-blur-2xl bg-white/70 border border-white/20 shadow-floating flex items-center px-4 overflow-hidden",
+        "animation": "Inner background has an animated gradient translating horizontally using gradient_ai_pulse colors at 20% opacity."
+      },
+      "bottom_navigation": {
+        "style": "Because 7 screens cannot fit gracefully in a standard bottom tab, implement a horizontally scrollable pill-shaped dock at the bottom OR use 5 main tabs: Home, Tasks, [AI FAB], Journal, More. The 'More' tab opens a beautifully animated bottom sheet containing Habits, Expenses, Health, Reminders.",
+        "container": "bg-white/90 backdrop-blur-xl border-t border-border_subtle pb-safe pt-2 px-4 flex flex-row justify-around items-center h-20"
+      }
+    },
+    "micro_animations": {
+      "button_press": "Scale down to 0.97 on press.",
+      "habit_check": "Checkbox inner fill expands from center with a subtle bounce. Confetti particle effect (SVG) bursts around the card upon 100% completion.",
+      "ai_listening": "When mic is active, an SVG ring around the floating mic button or the ambient bar scales and fades out repeatedly (sonar pulse).",
+      "screen_transition": "Fade and slide up by 10px."
+    }
+  },
+  "screens": {
+    "1_home_dashboard": {
+      "layout": "Bento Grid layout. Generous spacing.",
+      "elements": [
+        {"name": "Header", "desc": "Live clock (large serif font), greeting, and Current Mood emoji/selector."},
+        {"name": "Daily Stats Overview", "desc": "Horizontal scroll or 2x2 bento: Tasks Done (fraction), Habits %, Expenses Today, Water Glasses."},
+        {"name": "Streak Counter", "desc": "Flame icon with dynamic number, using accent_terracotta."},
+        {"name": "Next Reminder Card", "desc": "Prominent card taking full width. primary bg with light text to stand out."}
+      ]
+    },
+    "2_tasks": {
+      "layout": "List layout with sticky top filter chips.",
+      "elements": [
+        {"name": "Filter Chips", "desc": "All / Pending / Done (Scrollable row)."},
+        {"name": "Task List", "desc": "Cards with left border indicator for priority: Red (High), Yellow (Medium), Green (Low)."},
+        {"name": "FAB", "desc": "Bottom right for adding a task."}
+      ]
+    },
+    "3_habits": {
+      "layout": "Grid of 6 habit cards.",
+      "elements": [
+        {"name": "Daily Progress Ring", "desc": "Large circular progress at the top. 100% triggers celebration."},
+        {"name": "Habit Cards", "desc": "2 columns. Each card has a subtle icon, title (Gym, Work Block), and a large custom checkbox. Shows streak inside."}
+      ]
+    },
+    "4_expenses": {
+      "layout": "Split layout: Top summary, bottom list.",
+      "elements": [
+        {"name": "Total Card", "desc": "Massive typography (JetBrains Mono) for INR daily total. E.g., '₹ 1,240.00'."},
+        {"name": "Category Tags", "desc": "Small badges on each list item (Food, Transport, etc)."},
+        {"name": "Payment Method", "desc": "UPI/Cash indicators using subtle border chips."}
+      ]
+    },
+    "5_health_fitness": {
+      "layout": "Vertical stacked cards.",
+      "elements": [
+        {"name": "Water Tracker", "desc": "8 glass visual slots. Tap to fill. Blue/Sage accent."},
+        {"name": "Calorie Counter", "desc": "Linear progress bar. E.g., 1400 / 2200 kcal."},
+        {"name": "Workout Toggle", "desc": "Large switch or card that toggles 'Active Workout' state."}
+      ]
+    },
+    "6_reminders": {
+      "layout": "Tabbed view.",
+      "elements": [
+        {"name": "Tabs", "desc": "Upcoming / Past."},
+        {"name": "Cards", "desc": "Show time prominently. Repeat icon if recurring."}
+      ]
+    },
+    "7_journal": {
+      "layout": "Editorial layout. Focus on typography.",
+      "elements": [
+        {"name": "Mood Selector", "desc": "Great/Good/Okay/Low/Stressed row with distinct earthy colors."},
+        {"name": "Free-write Area", "desc": "Looks like an actual page. Uses the Cormorant Garamond font for the date header."},
+        {"name": "Entry List", "desc": "Past entries shown as minimalist cards with text truncation."}
+      ]
+    },
+    "8_ai_memory": {
+      "layout": "Chat interface full screen.",
+      "elements": [
+        {"name": "Messages", "desc": "User bubbles: background surface_secondary. AI bubbles: background transparent, text_primary. No bubble borders for AI to feel like a flowing conversation."},
+        {"name": "Quick Questions", "desc": "Horizontally scrolling chips at the bottom above input."},
+        {"name": "Input Area", "desc": "Text input + Persistent floating mic button next to it. TTS toggle (speaker icon) in header."}
+      ]
+    }
+  },
+  "media_assets": {
+    "images": [
+      {
+        "category": "ai_memory_background_or_texture",
+        "url": "https://images.unsplash.com/photo-1763968545160-d294a063e438?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzZ8MHwxfHNlYXJjaHwyfHxjYWxtJTIwbWluaW1hbGlzdCUyMHRleHR1cmUlMjBiYWNrZ3JvdW5kJTIwb3JnYW5pY3xlbnwwfHx8fDE3NzcxOTk3OTh8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Rippling water surface with light reflections. Use this as a very low opacity (5-10%) background image overlay in the AI Memory screen or Home dashboard to give it a premium organic feel."
+      }
+    ]
+  },
+  "testing": {
+    "data_testid_rules": "All interactive elements (buttons, nav items, habit checkboxes, habit cards, task rows, expense items, text inputs, mic button) MUST include a kebab-case role-based data-testid attribute. Examples: 'nav-home-tab', 'habit-check-gym', 'add-expense-button', 'ai-mic-toggle'."
+  },
+  "instructions_to_main_agent": [
+    "This is a React Native Expo application. Map the provided Tailwind-style classes to NativeWind or standard RN StyleSheet. 'rounded-full' = borderRadius: 9999, etc.",
+    "Do NOT use generic purple or teal gradients. Strictly adhere to the Organic & Earthy color palette.",
+    "For the bottom navigation, use a custom tab bar implementation or use a 5-tab layout where the middle is a distinct AI FAB, and one tab is 'More' (opening a bottom sheet for the remaining screens). Do not cram 7 icons into a standard tab bar.",
+    "Implement the 'ambient listening bar' as an absolutely positioned, high-z-index view at the top of the screen (or just below the notch) that only appears or highlights when voice listening is active.",
+    "Utilize safe area insets to ensure content isn't clipped by notches or home indicators.",
+    "For icons, prefer Lucide React Native (lucide-react-native) or Phosphor Icons for a clean, consistent look."
+  ]
+}
