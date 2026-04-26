@@ -8,8 +8,9 @@ Aura is a multi-user personal AI assistant Expo mobile app that handles tasks, h
 - Frontend: Expo SDK 54 + Expo Router (file-based)
 - AI: Claude Sonnet 4.5 via emergentintegrations + EMERGENT_LLM_KEY
 - Voice STT: OpenAI Whisper-1 via emergentintegrations + EMERGENT_LLM_KEY
-- TTS: expo-speech (on-device, voice picker)
+- TTS: OpenAI TTS-1 via emergentintegrations + EMERGENT_LLM_KEY (backend-driven, non-robotic)
 - Audio recording: expo-audio
+- Audio upload: expo-file-system FileSystem.uploadAsync (native); fetch+FormData (web)
 - Auth: Emergent-managed Google OAuth (Gmail sign-up). Bearer session token + httpOnly cookie
 - Storage: AsyncStorage for session_token + voice/wake-mode settings
 - Currency: INR (₹)
@@ -29,22 +30,21 @@ Aura is a multi-user personal AI assistant Expo mobile app that handles tasks, h
 12. `/settings` — Account info + sign-out, wake word toggle, TTS toggle, voice picker
 
 ## Bottom navigation tabs
-Home · Tasks · Habits · Money · Health · Alerts · Journal · **Calendar** · Aura
+Home · Tasks · Habits · Money · Health · Alerts · Journal · Calendar · Aura
 
 ## Voice
 - Persistent ambient bar (mic, TTS toggle, settings gear). Hidden on /login, /auth-callback, /settings
 - Tap mic for one-shot, long-press for hands-free
-- "Hey Aura" wake-word mode (toggle in Settings) — continuously listens, ignores anything without wake word
-- expo-speech voice picker in Settings
-- Whisper-based STT
+- "Hey Aura" wake-word mode (toggle in Settings)
+- OpenAI TTS voices: Nova, Shimmer, Coral, Sage, Alloy, Echo, Fable, Onyx, Ash
+- Whisper-based STT via FileSystem.uploadAsync (fixes 422 error on native)
 - Voice command parser handles ~18 patterns; unknown queries route to Claude memory
 
 ## Auth (Emergent-managed Google)
-- Frontend: `window.location.href = https://auth.emergentagent.com/?redirect=...` on web; `WebBrowser.openAuthSessionAsync` on native
-- Backend exchanges `session_id` → `session-data` from Emergent → stores user + 7-day session
-- All API endpoints require `Authorization: Bearer <session_token>` (or session_token cookie)
-- Per-user `user_id` UUID; data isolation verified via tests
-- `/api/auth/me`, `/api/auth/logout` available
+- Frontend: WebBrowser.openAuthSessionAsync on native
+- Backend exchanges session_id -> session-data from Emergent -> stores user + 7-day session
+- All API endpoints require Authorization: Bearer <session_token>
+- Per-user user_id UUID; data isolation enforced
 
 ## Backend endpoints (all under /api)
 - Auth: POST /auth/session, GET /auth/me, POST /auth/logout
@@ -56,28 +56,28 @@ Home · Tasks · Habits · Money · Health · Alerts · Journal · **Calendar** 
 - Journal: POST/GET/DELETE /journal
 - Mood: POST /mood, GET /mood/today
 - Dashboard: GET /dashboard
-- **History (calendar)**: GET /history/{date}, GET /history/active-dates/{year_month}
-- Chat: POST /chat, GET /chat/history (Claude with full memory context)
-- Transcribe: POST /transcribe (Whisper)
+- History (calendar): GET /history/{date}, GET /history/active-dates/{year_month}
+- Chat: POST /chat, GET /chat/history
+- Transcribe: POST /transcribe (Whisper, multipart/form-data)
+- TTS: POST /tts (OpenAI TTS-1, returns audio_b64)
 
-## Calendar
-- Month grid with prev/next buttons (capped at current month)
-- Today highlighted in terracotta; selected day in primary green
-- Dot indicator on every day with at least one record
-- Future days disabled
-- Selected day shows: summary chips (tasks/habits/money/water/workout/mood) + grouped sections for Tasks, Expenses, Habits done, Journal entries, Reminders
-
-## Persistence
-- MongoDB stores all data per user_id, indefinitely
-- Frontend caches session token in AsyncStorage
-- Voice settings cached in AsyncStorage (`aura_settings_v1`)
-
-## Smart Business Enhancement
-- Streak gamification + multi-device sync = retention engine
-- Calendar surfaces cumulative history → reinforces "Aura remembers everything" value prop, increasing willingness to log more data
-
-## Testing
-- 33 backend pytest cases (auth, isolation, calendar history) — all passing
-- 6 frontend mobile flows (390×844) — all passing
-- See /app/auth_testing.md for auth-gated testing playbook
+## Testing (Iteration 3 — Feb 2026)
+- 77 backend tests — all passing (100%)
+- Full frontend UI verification — all passing (100%)
+- Transcription 422 bug: FIXED (FileSystem.uploadAsync)
 - See /app/memory/test_credentials.md for seeded session token
+
+## Backlog
+### P1 (Near-term)
+- Verify "Hey Aura" continuous wake-word listening on real device
+- Verify data isolation across multiple real Google accounts
+
+### P2 (Medium-term)
+- Weekly/monthly insight charts
+- Smart suggestions from AI based on patterns
+
+### P3 (Future)
+- Export day journal as PDF
+- Share calendar with partner
+- Offline caching via AsyncStorage
+- Push notification delivery for reminders
