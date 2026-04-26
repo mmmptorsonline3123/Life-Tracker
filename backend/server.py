@@ -857,8 +857,21 @@ async def transcribe(request: Request, user: dict = Depends(get_current_user)):
         file_field = form.get("file")
         if not file_field:
             raise HTTPException(422, "No file field in multipart request")
-        suffix = Path(getattr(file_field, "filename", None) or "audio.m4a").suffix or ".m4a"
-        contents = await file_field.read()
+        if hasattr(file_field, "read"):
+            # Proper UploadFile object
+            suffix = Path(getattr(file_field, "filename", None) or "audio.m4a").suffix or ".m4a"
+            contents = await file_field.read()
+        elif isinstance(file_field, (bytes, bytearray)):
+            contents = bytes(file_field)
+            suffix = ".m4a"
+        else:
+            # Starlette parsed it as a string (Content-Disposition missing filename=)
+            # Recover raw binary via latin-1 (Starlette's fallback encoding for binary fields)
+            try:
+                contents = str(file_field).encode("latin-1")
+            except Exception:
+                contents = str(file_field).encode("utf-8", errors="replace")
+            suffix = ".m4a"
     else:
         # Native path — JSON body with base64-encoded audio (avoids FormData 422 bugs)
         try:
