@@ -101,3 +101,320 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: "Build a personal AI assistant that handles Tasks, Habits, Expenses, Health, Reminders, Journal, and AI Memory. Requires Voice Control (always-on, wake word, TTS) and Persistence. Product requirements: INR currency, Claude Sonnet 4.5, Whisper, TTS, Toast alerts, Gmail Auth, Calendar view."
+
+backend:
+  - task: "Google Auth (session exchange)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "POST /api/auth/session exchanges Emergent session_id for local token. Working in previous testing."
+
+  - task: "Tasks CRUD"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Full CRUD with user_id isolation. Needs retesting in new fork environment."
+
+  - task: "Habits CRUD"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Habits with daily toggle. Needs retesting in new fork environment."
+
+  - task: "Expenses CRUD (INR)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Expenses with INR currency. Needs retesting in new fork environment."
+
+  - task: "Health tracking"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Water, calories, workout tracking. Needs retesting in new fork environment."
+
+  - task: "Reminders CRUD"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Reminders with once/daily/weekly repeat. Needs retesting in new fork environment."
+
+  - task: "Journal CRUD"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Journal with mood. Needs retesting in new fork environment."
+
+  - task: "Claude AI Chat"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "POST /api/chat with Claude Sonnet via Emergent key. Needs retesting in new fork environment."
+
+  - task: "Whisper Transcription (POST /api/transcribe)"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "422 Unprocessable Entity error was reported. Fixed by switching frontend to FileSystem.uploadAsync. Backend endpoint is set up correctly. USER VERIFICATION PENDING."
+
+  - task: "OpenAI TTS (POST /api/tts)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "TTS returns base64 mp3. Needs retesting in new fork environment."
+
+  - task: "Calendar/History endpoint"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "GET /api/history/{date} returns day summary. Needs retesting in new fork."
+
+frontend:
+  - task: "Google Auth Login Screen"
+    implemented: true
+    working: true
+    file: "frontend/app/login.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Login screen with Google OAuth button. Redirects to auth-callback. Needs retesting."
+
+  - task: "Home Dashboard"
+    implemented: true
+    working: true
+    file: "frontend/app/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Shows daily overview, streak, quick stats. Needs retesting."
+
+  - task: "Tasks Screen"
+    implemented: true
+    working: true
+    file: "frontend/app/tasks.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Add/toggle/delete tasks. Needs retesting."
+
+  - task: "Habits Screen"
+    implemented: true
+    working: true
+    file: "frontend/app/habits.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Toggle daily habits. Needs retesting."
+
+  - task: "Expenses Screen (INR)"
+    implemented: true
+    working: true
+    file: "frontend/app/expenses.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Add expenses with INR. Needs retesting."
+
+  - task: "Health Screen"
+    implemented: true
+    working: true
+    file: "frontend/app/health.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Water/calorie/workout tracking. Needs retesting."
+
+  - task: "Reminders Screen"
+    implemented: true
+    working: true
+    file: "frontend/app/reminders.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Create/delete reminders. Needs retesting."
+
+  - task: "Journal Screen"
+    implemented: true
+    working: true
+    file: "frontend/app/journal.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Write/delete journal entries. Needs retesting."
+
+  - task: "AI Chat Screen"
+    implemented: true
+    working: true
+    file: "frontend/app/ai.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Claude AI chat with memory. Needs retesting."
+
+  - task: "Calendar Screen"
+    implemented: true
+    working: true
+    file: "frontend/app/calendar.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Calendar view with day history. Needs retesting."
+
+  - task: "Settings Screen (Voice, Wake Word, TTS)"
+    implemented: true
+    working: true
+    file: "frontend/app/settings.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "TTS voice selector, wake word toggle. Needs retesting."
+
+  - task: "Voice Recording & Transcription (Mic Button)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/VoiceContext.tsx"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "main"
+        comment: "422 error on transcription. Fixed to use FileSystem.uploadAsync. USER VERIFICATION PENDING in Expo Go on real device."
+
+  - task: "Bottom Navigation"
+    implemented: true
+    working: true
+    file: "frontend/components/BottomNav.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "8-tab bottom nav. Needs retesting."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 1
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Voice Recording & Transcription (Mic Button)"
+    - "Whisper Transcription (POST /api/transcribe)"
+    - "OpenAI TTS (POST /api/tts)"
+    - "Claude AI Chat"
+    - "Home Dashboard"
+    - "Tasks Screen"
+    - "Google Auth Login Screen"
+  stuck_tasks:
+    - "Voice Recording & Transcription (Mic Button)"
+    - "Whisper Transcription (POST /api/transcribe)"
+  test_all: true
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "This is a forked session. Services are running (backend on port 8001, expo on port 3000). Test token is 'test_token_1777209695405'. Test all backend endpoints using curl with Authorization: Bearer test_token_1777209695405 header. For frontend UI test, use screenshot tool on https://personal-ai-hub-62.preview.emergentagent.com. Key priority: verify /api/transcribe endpoint accepts multipart/form-data file upload without 422 error (test with an actual audio file). Also verify /api/tts and /api/chat endpoints work with Emergent LLM key. All screens should be navigable."

@@ -17,10 +17,10 @@ from datetime import datetime, timezone, timedelta
 import pytest
 import requests
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://smart-life-tracker-3.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://personal-ai-hub-62.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
-PRESEEDED_TOKEN = "test_token_1777208185715"
+PRESEEDED_TOKEN = "test_token_1777209695405"
 PRESEEDED_USER_ID = "test-user-1777208185715"
 PRESEEDED_EMAIL = "test@example.com"
 
