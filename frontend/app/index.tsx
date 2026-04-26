@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { ScrollView, StyleSheet, Text, View, RefreshControl, TouchableOpacity, Pressable } from 'react-native';
-import { useFocusEffect } from 'expo-router';
-import { Flame, Sparkles, CheckSquare, Repeat, IndianRupee, Droplet, Bell } from 'lucide-react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { Flame, Sparkles, CheckSquare, Repeat, IndianRupee, Droplet, Bell, BarChart2 } from 'lucide-react-native';
 import ScreenContainer from '../components/ScreenContainer';
 import { Colors, Radius } from '../src/theme';
 import { api } from '../src/api';
@@ -12,6 +12,7 @@ const MOOD_EMOJI: Record<string, string> = { Great: '☀', Good: '🙂', Okay: '
 
 export default function HomeScreen() {
   const v = useVoice();
+  const router = useRouter();
   const [data, setData] = useState<any>(null);
   const [now, setNow] = useState(new Date());
   const [refreshing, setRefreshing] = useState(false);
@@ -152,6 +153,23 @@ export default function HomeScreen() {
         )}
 
         <View style={{ height: 40 }} />
+        {/* Insights card */}
+        <TouchableOpacity
+          onPress={() => router.push('/insights' as any)}
+          style={styles.insightsCard}
+          testID="insights-card"
+        >
+          <View style={styles.insightsLeft}>
+            <BarChart2 size={22} color={Colors.primary} />
+            <View style={{ marginLeft: 12 }}>
+              <Text style={styles.insightsTitle}>View Insights</Text>
+              <Text style={styles.insightsSub}>Habits · Expenses · Health trends</Text>
+            </View>
+          </View>
+          <Text style={styles.insightsArrow}>→</Text>
+        </TouchableOpacity>
+
+        <View style={{ height: 60 }} />
       </ScrollView>
     </ScreenContainer>
   );
@@ -241,4 +259,19 @@ const styles = StyleSheet.create({
   reminderLabel: { color: '#F9F9F6', opacity: 0.7, fontSize: 11, fontWeight: '700', letterSpacing: 1, textTransform: 'uppercase' },
   reminderTitle: { color: '#F9F9F6', fontSize: 18, fontWeight: '600', marginTop: 2 },
   reminderTime: { color: '#F9F9F6', opacity: 0.8, fontSize: 13, marginTop: 4 },
+  insightsCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.card,
+    padding: 18,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  insightsLeft: { flexDirection: 'row', alignItems: 'center' },
+  insightsTitle: { fontSize: 16, fontWeight: '700', color: Colors.textPrimary },
+  insightsSub: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  insightsArrow: { fontSize: 18, color: Colors.primary, fontWeight: '600' },
 });

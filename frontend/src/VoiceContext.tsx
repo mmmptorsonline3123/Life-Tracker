@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { Platform, AppState, AppStateStatus } from 'react-native';
 import * as Speech from 'expo-speech';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
@@ -97,6 +97,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
   const voiceIdRef = useRef<string>('nova');
   const playerRef = useRef<any>(null);
   const audioElRef = useRef<any>(null);
+  const startRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   // Load settings
   useEffect(() => {
@@ -245,6 +246,28 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
 
   const setToast = useCallback((fn: ToastFn) => { toastRef.current = fn; }, []);
   const setOnDataChange = useCallback((fn: () => void) => { dataChangeRef.current = fn; }, []);
+
+  // P1: AppState listener — resume wake-word listening when app returns to foreground
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const sub = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active' && wakeModeRef.current && !isProcessingRef.current) {
+        // App back to foreground — restart listening after short stabilisation delay
+        setTimeout(() => {
+          if (wakeModeRef.current && !isProcessingRef.current) {
+            startRecordingRef.current().catch(() => {});
+          }
+        }, 1200);
+      } else if ((nextState === 'background' || nextState === 'inactive') && Platform.OS === 'ios') {
+        // iOS stops background audio — stop cleanly to avoid zombie recording
+        if (recState.isRecording) {
+          recorder.stop().catch(() => {});
+        }
+      }
+    });
+    return () => sub.remove();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recorder, recState.isRecording]);
 
   const handleParsed = useCallback(
     async (raw: string, fromWake = false) => {
@@ -418,6 +441,8 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
   }, [recorder, recState.isRecording, handleParsed, speak, startRecordingInternal]);
 
   const startRecording = startRecordingInternal;
+  // Keep ref in sync so AppState listener can call it without stale closure
+  startRecordingRef.current = startRecordingInternal;
 
   const toggleMic = useCallback(async () => {
     if (recState.isRecording) await stopRecording();

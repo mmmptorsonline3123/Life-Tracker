@@ -775,6 +775,70 @@ async def chat_history(session_id: str = "main", user: dict = Depends(get_curren
     return docs
 
 
+# ============== INSIGHTS ==============
+
+@api_router.get("/insights")
+async def get_insights(period: str = "week", user: dict = Depends(get_current_user)):
+    user_id = user["user_id"]
+    from datetime import date as date_type
+    today = now_utc().date()
+    days_count = 30 if period == "month" else 7
+    date_list = [(today - timedelta(days=i)).isoformat() for i in range(days_count - 1, -1, -1)]
+
+    habit_docs = await db.habit_logs.find(
+        {"user_id": user_id, "date": {"$in": date_list}}, {"_id": 0}
+    ).to_list(None)
+    expense_docs = await db.expenses.find(
+        {"user_id": user_id, "date": {"$in": date_list}}, {"_id": 0}
+    ).to_list(None)
+    health_docs = await db.health_logs.find(
+        {"user_id": user_id, "date": {"$in": date_list}}, {"_id": 0}
+    ).to_list(None)
+    mood_docs = await db.moods.find(
+        {"user_id": user_id, "date": {"$in": date_list}}, {"_id": 0}
+    ).to_list(None)
+
+    habit_by_date = {d["date"]: d.get("state", {}) for d in habit_docs}
+    expense_by_date: dict = {}
+    for e in expense_docs:
+        expense_by_date.setdefault(e["date"], 0)
+        expense_by_date[e["date"]] += e.get("amount", 0)
+    health_by_date = {d["date"]: d for d in health_docs}
+    mood_by_date = {d["date"]: d.get("mood") for d in mood_docs}
+
+    result = []
+    for d_str in date_list:
+        state = habit_by_date.get(d_str, {})
+        habits_done = sum(1 for k in HABIT_KEYS if state.get(k, False))
+        health = health_by_date.get(d_str, {})
+        d_obj = date_type.fromisoformat(d_str)
+        label = d_obj.strftime("%a") if period == "week" else d_obj.strftime("%d")
+        result.append({
+            "date": d_str,
+            "label": label,
+            "habits_done": habits_done,
+            "habits_pct": round(habits_done / len(HABIT_KEYS) * 100),
+            "expense_total": round(expense_by_date.get(d_str, 0), 2),
+            "water": health.get("water", 0),
+            "calories": health.get("calories", 0),
+            "workout": health.get("workout", False),
+            "mood": mood_by_date.get(d_str),
+        })
+
+    total_expense = sum(r["expense_total"] for r in result)
+    avg_habits_pct = round(sum(r["habits_pct"] for r in result) / max(len(result), 1))
+
+    return {
+        "period": period,
+        "days": result,
+        "summary": {
+            "total_expense": round(total_expense, 2),
+            "avg_expense": round(total_expense / max(len(result), 1), 2),
+            "avg_habits_pct": avg_habits_pct,
+        },
+    }
+
+
 # ============== TRANSCRIBE (Whisper) ==============
 
 @api_router.post("/transcribe")

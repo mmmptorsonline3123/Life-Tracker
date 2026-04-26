@@ -156,6 +156,9 @@ export const api = {
     return res.json();
   },
 
+  // insights
+  insights: (period: 'week' | 'month' = 'week') => request(`/insights?period=${period}`),
+
   // tts (OpenAI)
   tts: (text: string, voice?: string) =>
     request('/tts', { method: 'POST', body: JSON.stringify({ text, voice: voice || 'nova' }) }),
