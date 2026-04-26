@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Platform, AppState, AppStateStatus } from 'react-native';
+import { Platform, AppState, AppStateStatus, Linking } from 'react-native';
 import * as Speech from 'expo-speech';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
@@ -10,6 +10,8 @@ import {
   AudioModule,
   RecordingPresets,
   createAudioPlayer,
+  requestRecordingPermissionsAsync,
+  getRecordingPermissionsAsync,
 } from 'expo-audio';
 import { useRouter } from 'expo-router';
 import { api } from './api';
@@ -53,6 +55,7 @@ type VoiceCtx = {
   lastReply: string;
   voiceId: string;
   wakeMode: boolean;
+  permGranted: boolean;
   setVoiceId: (id: string) => Promise<void>;
   setWakeMode: (on: boolean) => Promise<void>;
   startRecording: () => Promise<void>;
@@ -120,21 +123,27 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  // Audio permission
+  // Audio permission — check status first, then request if needed
   useEffect(() => {
     (async () => {
       try {
-        if (Platform.OS === 'web') {
-          setPermGranted(true);
-          return;
-        }
-        const status = await AudioModule.requestRecordingPermissionsAsync();
-        if (status.granted) {
+        if (Platform.OS === 'web') { setPermGranted(true); return; }
+        // Check current status without prompting first
+        const current = await getRecordingPermissionsAsync();
+        if (current.granted) {
           await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
           setPermGranted(true);
-        } else {
-          toastRef.current('Microphone permission denied');
+        } else if (current.canAskAgain) {
+          // Undetermined — show system dialog
+          const result = await requestRecordingPermissionsAsync();
+          if (result.granted) {
+            await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+            setPermGranted(true);
+          } else {
+            toastRef.current('Microphone permission denied — enable it in Settings');
+          }
         }
+        // canAskAgain=false means permanently denied; handled per-tap in startRecordingInternal
       } catch (e) {
         console.warn('Audio permission error', e);
       }
@@ -376,9 +385,33 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
   );
 
   const startRecordingInternal = useCallback(async () => {
-    if (!permGranted && Platform.OS !== 'web') {
-      toastRef.current('Microphone permission required');
-      return;
+    if (Platform.OS !== 'web' && !permGranted) {
+      // Attempt to recover permission on every tap
+      try {
+        const current = await getRecordingPermissionsAsync();
+        if (current.granted) {
+          await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+          setPermGranted(true);
+          // Fall through to recording below
+        } else if (current.canAskAgain) {
+          const result = await requestRecordingPermissionsAsync();
+          if (!result.granted) {
+            toastRef.current('Microphone permission required');
+            return;
+          }
+          await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+          setPermGranted(true);
+          // Fall through to recording below
+        } else {
+          // Permanently denied — send user to iOS/Android Settings
+          toastRef.current('Enable microphone in Settings → Privacy → Microphone');
+          Linking.openSettings().catch(() => Linking.openURL('app-settings:').catch(() => {}));
+          return;
+        }
+      } catch {
+        toastRef.current('Microphone permission required');
+        return;
+      }
     }
     if (recState.isRecording) return;
     try {
@@ -498,6 +531,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     lastReply,
     voiceId,
     wakeMode,
+    permGranted,
     setVoiceId,
     setWakeMode,
     startRecording,

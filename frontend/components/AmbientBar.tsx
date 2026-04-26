@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, TouchableOpacity, View, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Mic, MicOff, Volume2, VolumeX, Loader, Settings, Sparkles } from 'lucide-react-native';
+import { Mic, MicOff, Volume2, VolumeX, Loader, Settings, Sparkles, AlertCircle } from 'lucide-react-native';
 import { Colors, Radius } from '../src/theme';
 import { useVoice } from '../src/VoiceContext';
 
@@ -41,6 +41,8 @@ export default function AmbientBar() {
   const bgIntensity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.0, 0.18] });
 
   let displayText = 'Tap mic to talk';
+  if (!v.permGranted) displayText = 'Tap to enable microphone';
+  else 
   if (v.isProcessing) displayText = 'Thinking…';
   else if (v.isRecording) displayText = v.transcript || (v.wakeMode ? 'Say "Hey Aura"…' : 'Listening…');
   else if (v.transcript) displayText = `“${v.transcript}”`;
@@ -76,6 +78,8 @@ export default function AmbientBar() {
         >
           {v.isProcessing ? (
             <Loader size={18} color="#fff" />
+          ) : !v.permGranted ? (
+            <AlertCircle size={18} color="#fff" />
           ) : v.wakeMode && !v.isRecording ? (
             <Sparkles size={18} color="#fff" />
           ) : v.isRecording ? (
