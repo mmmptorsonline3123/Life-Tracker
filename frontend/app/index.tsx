@@ -195,8 +195,8 @@ function StatCard({ icon, label, value, testID }: any) {
 }
 
 // ── Morning Brief Card ────────────────────────────────────────────────────────
-const BRIEF_KEY  = (d: string) => `aura_brief_${d}`;
-const DIMISS_KEY = (d: string) => `aura_brief_dismissed_${d}`;
+const BRIEF_KEY   = (d: string) => `aura_brief_${d}`;
+const DISMISS_KEY = (d: string) => `aura_brief_dismissed_${d}`;
 
 function MorningBriefCard({ speak }: { speak: (t: string) => void }) {
   const today = new Date();
@@ -215,7 +215,7 @@ function MorningBriefCard({ speak }: { speak: (t: string) => void }) {
 
   const load = useCallback(async () => {
     // Check dismissed
-    const dis = await AsyncStorage.getItem(DIMISS_KEY(dateStr));
+    const dis = await AsyncStorage.getItem(DISMISS_KEY(dateStr));
     if (dis) { setDismissed(true); return; }
 
     // Check cached brief
@@ -253,7 +253,7 @@ function MorningBriefCard({ speak }: { speak: (t: string) => void }) {
 
   const dismiss = async () => {
     Animated.timing(fadeAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => setDismissed(true));
-    await AsyncStorage.setItem(DIMISS_KEY(dateStr), '1');
+    await AsyncStorage.setItem(DISMISS_KEY(dateStr), '1');
   };
 
   const playBrief = () => {

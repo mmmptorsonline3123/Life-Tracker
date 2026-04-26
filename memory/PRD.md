@@ -61,25 +61,24 @@ Home · Tasks · Habits · Money · Health · Alerts · Journal · Calendar · A
 - Transcribe: POST /transcribe (Whisper, multipart/form-data)
 - TTS: POST /tts (OpenAI TTS-1, returns audio_b64)
 
-## Testing (Iteration 4 — Feb 2026)
-- 21 backend tests for insights endpoint — all passing (100%)
-- Full frontend UI verification — all passing (100%)
-- Bug fixed: db.mood → db.moods in insights endpoint (motor phantom collection)
-- AppState wake word listener verified (ref pattern, no TDZ issues)
-- Insights charts: 4 charts (habits %, expenses, water, calories) with week/month toggle
-- See /app/memory/test_credentials.md for seeded session token
+## Testing (Iteration 5 — Feb 2026)
+- 19/19 backend tests for morning-brief — all passing (100%)
+- All frontend code checks passing (100%)
+- Claude-confirmed: `GET /api/morning-brief` returns real personalized briefing via claude-sonnet-4-5-20250929
+- MongoDB day-caching confirmed (2nd call returns cached brief)
+- MorningBriefCard: renders 7 AM–12 PM only, dismiss/play buttons verified
+- All minor issues (user_id leak in cache, DIMISS_KEY typo) fixed
 
 ## Backlog
 ### P1 (Near-term)
-- Test "Hey Aura" continuous wake-word listening on real physical device with Expo Go
-- Verify data isolation across multiple real Google accounts
+- Test "Hey Aura" continuous listening on real physical device with Expo Go
 
 ### P2 (Medium-term)
-- Smart daily AI insights notifications (morning summaries)
 - Mood trend chart in Insights screen
+- Smart suggestions from AI based on patterns
 
 ### P3 (Future)
-- Export day journal as PDF
+- Export journal as PDF
 - Share calendar with partner
 - Offline caching via AsyncStorage
 - Push notification delivery for reminders

@@ -681,7 +681,7 @@ async def morning_brief(user: dict = Depends(get_current_user)):
     first_name = name.split()[0] if name != "there" else "there"
 
     # Return cached brief for today if it exists
-    cached = await db.morning_briefs.find_one({"user_id": user_id, "date": today}, {"_id": 0})
+    cached = await db.morning_briefs.find_one({"user_id": user_id, "date": today}, {"_id": 0, "user_id": 0})
     if cached:
         return cached
 
