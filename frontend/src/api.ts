@@ -126,6 +126,13 @@ export const api = {
       }
       if (!audio_b64) throw new Error('Empty audio file');
 
+      // Guard: skip API if file is clearly too small to contain real speech.
+      // A valid 1-second M4A is ~10 KB; anything under 2 KB is silence/header-only.
+      const estimatedBytes = Math.floor(audio_b64.length * 0.75);
+      if (estimatedBytes < 2048) {
+        return { text: '' };
+      }
+
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch(`${BASE}/api/transcribe`, {

@@ -171,6 +171,13 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
         const player = createAudioPlayer({ uri: path });
         playerRef.current = player;
         player.play();
+        // Reset audio session to recording mode after playback finishes
+        // so the next mic tap works correctly on iOS
+        player.addListener('playingChange', (evt: any) => {
+          if (evt?.isPlaying === false) {
+            setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true }).catch(() => {});
+          }
+        });
       }
     } catch (e) {
       console.warn('Audio play error', e);
@@ -375,6 +382,12 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     }
     if (recState.isRecording) return;
     try {
+      // Re-configure audio session for recording on every attempt.
+      // This is critical on iOS: after TTS playback the session drifts to
+      // playback mode, causing the next recording to capture silence.
+      if (Platform.OS !== 'web') {
+        await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      }
       await recorder.prepareToRecordAsync();
       await recorder.record();
       recordStartRef.current = Date.now();
@@ -390,8 +403,9 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
       if (!recState.isRecording) return;
       const recordedMs = Date.now() - (recordStartRef.current || Date.now());
       await recorder.stop();
-      // Wait briefly for URI to be ready on some platforms
-      await new Promise((r) => setTimeout(r, 150));
+      // Increase wait — iOS needs time to finalise and flush the M4A container.
+      // 150ms was too short; 400ms is safe on all devices.
+      await new Promise((r) => setTimeout(r, 400));
       const uri = recorder.uri;
 
       if (recordedMs < 500) {
