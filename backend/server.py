@@ -9,6 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 import tempfile
+import base64
 import httpx
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -842,15 +843,43 @@ async def get_insights(period: str = "week", user: dict = Depends(get_current_us
 # ============== TRANSCRIBE (Whisper) ==============
 
 @api_router.post("/transcribe")
-async def transcribe(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+@api_router.post("/transcribe")
+async def transcribe(request: Request, user: dict = Depends(get_current_user)):
+    """Accepts either JSON {audio_b64, format} (native) or multipart/form-data (web)."""
     if not EMERGENT_LLM_KEY:
         raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
-    suffix = Path(file.filename or "audio.m4a").suffix or ".m4a"
+
+    content_type = request.headers.get("content-type", "")
+
+    if "multipart" in content_type:
+        # Web path — standard multipart upload
+        form = await request.form()
+        file_field = form.get("file")
+        if not file_field:
+            raise HTTPException(422, "No file field in multipart request")
+        suffix = Path(getattr(file_field, "filename", None) or "audio.m4a").suffix or ".m4a"
+        contents = await file_field.read()
+    else:
+        # Native path — JSON body with base64-encoded audio (avoids FormData 422 bugs)
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(422, "Expected JSON body with audio_b64 field")
+        audio_b64 = body.get("audio_b64", "")
+        fmt = str(body.get("format", "m4a")).lstrip(".").strip() or "m4a"
+        suffix = f".{fmt}"
+        if not audio_b64:
+            raise HTTPException(422, "audio_b64 is empty")
+        try:
+            contents = base64.b64decode(audio_b64)
+        except Exception:
+            raise HTTPException(422, "Invalid base64 audio data")
+
+    if not contents or len(contents) < 512:
+        return {"text": ""}
+
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     try:
-        contents = await file.read()
-        if not contents or len(contents) < 1024:
-            return {"text": ""}
         tmp.write(contents)
         tmp.close()
         stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)

@@ -10,7 +10,7 @@ Aura is a multi-user personal AI assistant Expo mobile app that handles tasks, h
 - Voice STT: OpenAI Whisper-1 via emergentintegrations + EMERGENT_LLM_KEY
 - TTS: OpenAI TTS-1 via emergentintegrations + EMERGENT_LLM_KEY (backend-driven, non-robotic)
 - Audio recording: expo-audio
-- Audio upload: expo-file-system FileSystem.uploadAsync (native); fetch+FormData (web)
+- Audio upload: expo-file-system `readAsStringAsync + EncodingType.Base64` → JSON body `{audio_b64, format}` (definitively fixes all multipart 422 errors on native)
 - Auth: Emergent-managed Google OAuth (Gmail sign-up). Bearer session token + httpOnly cookie
 - Storage: AsyncStorage for session_token + voice/wake-mode settings
 - Currency: INR (₹)

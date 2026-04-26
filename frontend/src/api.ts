@@ -105,50 +105,53 @@ export const api = {
   history: (date: string) => request(`/history/${date}`),
   historyActiveDates: (yearMonth: string) => request(`/history/active-dates/${yearMonth}`),
 
-  // transcribe — uses FileSystem.uploadAsync on native (rock-solid multipart),
-  // falls back to fetch+FormData on web
+  // transcribe — native: reads file as base64 JSON (avoids all multipart 422 bugs)
+  //              web: standard FormData fetch
   transcribe: async (uri: string): Promise<{ text: string }> => {
     const token = await getToken();
     if (!uri) throw new Error('No audio recorded');
+
     const m = uri.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
     const ext = (m?.[1] || 'm4a').toLowerCase();
-    const mimeMap: Record<string, string> = {
-      m4a: 'audio/m4a', mp3: 'audio/mpeg', mp4: 'audio/mp4',
-      wav: 'audio/wav', aac: 'audio/aac', '3gp': 'audio/3gpp',
-      webm: 'audio/webm', ogg: 'audio/ogg', caf: 'audio/x-caf',
-    };
-    const type = mimeMap[ext] || 'audio/m4a';
 
     if (Platform.OS !== 'web') {
-      const result = await FileSystem.uploadAsync(`${BASE}/api/transcribe`, uri, {
-        httpMethod: 'POST',
-        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-        fieldName: 'file',
-        mimeType: type,
-        parameters: {},
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (result.status < 200 || result.status >= 300) {
-        throw new Error(`Transcribe ${result.status}: ${(result.body || '').slice(0, 120)}`);
-      }
+      // Read the recorded file as base64 and send as JSON — rock-solid on all native platforms
+      let audio_b64: string;
       try {
-        return JSON.parse(result.body || '{}');
-      } catch {
-        return { text: '' };
+        audio_b64 = await FileSystem.readAsStringAsync(uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      } catch (e: any) {
+        throw new Error(`Failed to read audio: ${e?.message || 'unknown'}`);
       }
+      if (!audio_b64) throw new Error('Empty audio file');
+
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${BASE}/api/transcribe`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ audio_b64, format: ext }),
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`Transcribe ${res.status}: ${t.slice(0, 120)}`);
+      }
+      return res.json();
     }
 
-    // Web fallback
+    // Web fallback: FormData
+    const mimeMap: Record<string, string> = {
+      m4a: 'audio/m4a', mp3: 'audio/mpeg', mp4: 'audio/mp4',
+      wav: 'audio/wav', aac: 'audio/aac', webm: 'audio/webm', ogg: 'audio/ogg',
+    };
+    const type = mimeMap[ext] || 'audio/webm';
     const form = new FormData();
-    // @ts-ignore
+    // @ts-ignore — React Native FormData accepts {uri, name, type}
     form.append('file', { uri, name: `audio.${ext}`, type });
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
-    const res = await fetch(`${BASE}/api/transcribe`, {
-      method: 'POST',
-      body: form as any,
-      headers,
-    });
+    const res = await fetch(`${BASE}/api/transcribe`, { method: 'POST', body: form as any, headers });
     if (!res.ok) {
       const t = await res.text();
       throw new Error(`Transcribe ${res.status}: ${t.slice(0, 120)}`);
