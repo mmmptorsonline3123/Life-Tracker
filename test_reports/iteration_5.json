@@ -1,0 +1,57 @@
+{
+  "summary": "Iteration 5 — Morning Brief AI feature tested. Backend GET /api/morning-brief: 19/19 tests pass — real Claude-generated brief confirmed, MongoDB caching working, 401 auth protection working. All 7 required response fields present. Frontend: MorningBriefCard component exists with all required testIDs, api.morningBrief() confirmed in api.ts. Home screen renders cleanly at all hours (confirmed at 15:04 UTC / afternoon — card correctly hidden). No red screen errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/morning-brief",
+        "issue": "Cached response leaks user_id field: find_one projection uses {'_id': 0} but not {'user_id': 0}, so cached responses include user_id while first-call responses do not. Inconsistent response shape.",
+        "priority": "LOW",
+        "fix": "Change projection in morning_brief handler: find_one({'user_id': user_id, 'date': today}, {'_id': 0, 'user_id': 0})"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "MorningBriefCard (index.tsx line 199)",
+        "issue": "Typo: DIMISS_KEY should be DISMISS_KEY. Both usages are consistent with same typo so functionally works, but is a code quality issue."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_morning_brief.py",
+    "/app/test_reports/pytest/iter5_morning_brief.xml"
+  ],
+  "action_items": [
+    "LOW: Fix find_one projection in morning_brief handler to exclude user_id from cached responses: change {'_id': 0} to {'_id': 0, 'user_id': 0}",
+    "LOW: Fix typo DIMISS_KEY -> DISMISS_KEY in frontend/app/index.tsx (line 199)"
+  ],
+  "critical_code_review_comments": [
+    "MorningBriefCard only renders between hour 7-12 (isMorning check on line 214/266). The testID='morning-brief-card' is inside conditional render so won't be visible outside morning hours — this is by design.",
+    "api.morningBrief() confirmed at api.ts line 163: request('/morning-brief')",
+    "testID='brief-dismiss' at index.tsx line 276 ✓",
+    "testID='brief-play' at index.tsx line 304 ✓ (only renders when brief text exists and not loading)",
+    "Cache leak: MongoDB document stored with user_id field, returned as-is from find_one — first call omits user_id, second (cached) includes it. Minor inconsistency.",
+    "Claude fallback on line 755-759: if Claude LLM fails, generates a fallback brief string — good defensive coding.",
+    "Streak calculation inside morning_brief endpoint (lines 715-722) uses a loop that queries habit_logs per day (up to 365 individual DB queries). Could be optimized for performance but works correctly.",
+    "No _id exposed in API response: find_one with {'_id': 0} projection works correctly for _id exclusion."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_morning_brief.py (created — 19 test cases for morning-brief endpoint)",
+    "/app/test_reports/pytest/iter5_morning_brief.xml (created)",
+    "/app/test_reports/iteration_5.json (created)"
+  ],
+  "success_rate": {
+    "backend": "100% (19/19 morning-brief tests)",
+    "frontend": "100% — home screen loads at all hours, card correctly hidden in afternoon, all testIDs exist in code"
+  },
+  "seed_data_creation": "No new seed data created. Test user test-user-1777208185715 had existing data (1 task pending, ₹120 expense, mood=Good).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth: Bearer test_token_1777209695405. Morning brief is cached for today (2026-04-26) in db.morning_briefs collection. The brief card only shows between hour 7-12 locally — to test the card UI, either change isMorning check temporarily or test in morning hours. All 19 backend tests pass. Claude integration confirmed working with real LiteLLM calls to claude-sonnet-4-5-20250929.",
+  "rca_of_issue": "Cache user_id leak RCA: In morning_brief handler, the MongoDB document is stored with user_id: `{**result, 'user_id': user_id}`. When returning cached result, find_one projection only excludes _id but NOT user_id. The first-call (non-cached) response returns `result` dict which has no user_id key. This causes inconsistent response shape between first and cached calls. Fix: add 'user_id': 0 to find_one projection."
+}

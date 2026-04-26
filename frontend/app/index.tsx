@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { Animated, Easing, ScrollView, StyleSheet, Text, View, RefreshControl, TouchableOpacity, Pressable } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Flame, Sparkles, CheckSquare, Repeat, IndianRupee, Droplet, Bell, BarChart2 } from 'lucide-react-native';
 import ScreenContainer from '../components/ScreenContainer';
@@ -72,6 +73,9 @@ export default function HomeScreen() {
         {v.wakeMode && (
           <WakeWordIndicator isProcessing={v.isProcessing} isRecording={v.isRecording} />
         )}
+
+        {/* Morning brief card — 7 AM to 12 PM only */}
+        <MorningBriefCard speak={v.speak} />
 
         {/* Streak */}
         <View style={styles.streakRow}>
@@ -186,6 +190,130 @@ function StatCard({ icon, label, value, testID }: any) {
       <View style={styles.statIcon}>{icon}</View>
       <Text style={styles.statLabel}>{label}</Text>
       <Text style={styles.statValue}>{value}</Text>
+    </View>
+  );
+}
+
+// ── Morning Brief Card ────────────────────────────────────────────────────────
+const BRIEF_KEY  = (d: string) => `aura_brief_${d}`;
+const DIMISS_KEY = (d: string) => `aura_brief_dismissed_${d}`;
+
+function MorningBriefCard({ speak }: { speak: (t: string) => void }) {
+  const today = new Date();
+  const hour  = today.getHours();
+  const dateStr = today.toISOString().slice(0, 10);
+
+  const [brief, setBrief]         = useState<string | null>(null);
+  const [meta, setMeta]           = useState<any>(null);
+  const [loading, setLoading]     = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [playing, setPlaying]     = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Only show between 7 AM and 12 PM — but for easy testing also allow override
+  const isMorning = hour >= 7 && hour < 12;
+
+  const load = useCallback(async () => {
+    // Check dismissed
+    const dis = await AsyncStorage.getItem(DIMISS_KEY(dateStr));
+    if (dis) { setDismissed(true); return; }
+
+    // Check cached brief
+    const cached = await AsyncStorage.getItem(BRIEF_KEY(dateStr));
+    if (cached) {
+      const d = JSON.parse(cached);
+      setBrief(d.brief);
+      setMeta(d);
+      return;
+    }
+
+    // Fetch from backend
+    setLoading(true);
+    try {
+      const d = await api.morningBrief();
+      await AsyncStorage.setItem(BRIEF_KEY(dateStr), JSON.stringify(d));
+      setBrief(d.brief);
+      setMeta(d);
+    } catch (e) {
+      console.warn('Morning brief error', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [dateStr]);
+
+  useEffect(() => {
+    if (isMorning) load();
+  }, [isMorning, load]);
+
+  useEffect(() => {
+    if (brief && !dismissed) {
+      Animated.spring(fadeAnim, { toValue: 1, useNativeDriver: true, damping: 14 }).start();
+    }
+  }, [brief, dismissed]);
+
+  const dismiss = async () => {
+    Animated.timing(fadeAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => setDismissed(true));
+    await AsyncStorage.setItem(DIMISS_KEY(dateStr), '1');
+  };
+
+  const playBrief = () => {
+    if (!brief) return;
+    setPlaying(true);
+    speak(brief);
+    setTimeout(() => setPlaying(false), (brief.length / 15) * 1000 + 2000);
+  };
+
+  if (!isMorning || dismissed || (!brief && !loading)) return null;
+
+  return (
+    <Animated.View style={[styles.briefCard, { opacity: fadeAnim, transform: [{ scaleY: fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] }) }] }]} testID="morning-brief-card">
+      {/* Top row: icon + title + dismiss */}
+      <View style={styles.briefHeader}>
+        <View style={styles.briefTitleRow}>
+          <Text style={styles.briefSunIcon}>☀️</Text>
+          <Text style={styles.briefTitle}>Good Morning</Text>
+        </View>
+        <TouchableOpacity onPress={dismiss} style={styles.briefDismiss} testID="brief-dismiss">
+          <Text style={styles.briefDismissText}>✕</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Brief text */}
+      {loading ? (
+        <View style={styles.briefLoadingRow}>
+          <View style={styles.briefSkeleton} />
+          <View style={[styles.briefSkeleton, { width: '70%', marginTop: 6 }]} />
+          <View style={[styles.briefSkeleton, { width: '85%', marginTop: 6 }]} />
+        </View>
+      ) : (
+        <Text style={styles.briefText} testID="brief-text">{brief}</Text>
+      )}
+
+      {/* Stats chips */}
+      {meta && !loading && (
+        <View style={styles.briefChips}>
+          <BriefChip emoji="🔥" label={`${meta.streak}d streak`} />
+          <BriefChip emoji="✅" label={`${meta.tasks_pending} tasks`} />
+          <BriefChip emoji="💰" label={`₹${meta.spend_yesterday?.toFixed(0)} spent`} />
+          <BriefChip emoji="💪" label={`${meta.habits_done_yesterday}/${meta.habits_total} habits`} />
+        </View>
+      )}
+
+      {/* Play button */}
+      {brief && !loading && (
+        <TouchableOpacity onPress={playBrief} style={styles.briefPlay} testID="brief-play">
+          <Text style={styles.briefPlayText}>{playing ? '⏸ Playing…' : '▶ Play'}</Text>
+        </TouchableOpacity>
+      )}
+    </Animated.View>
+  );
+}
+
+function BriefChip({ emoji, label }: { emoji: string; label: string }) {
+  return (
+    <View style={styles.briefChip}>
+      <Text style={styles.briefChipEmoji}>{emoji}</Text>
+      <Text style={styles.briefChipLabel}>{label}</Text>
     </View>
   );
 }
@@ -363,7 +491,44 @@ const styles = StyleSheet.create({
   insightsTitle: { fontSize: 16, fontWeight: '700', color: Colors.textPrimary },
   insightsSub: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
   insightsArrow: { fontSize: 18, color: Colors.primary, fontWeight: '600' },
-  // ── Wake Word Indicator styles ───────────────────────────────────────────────
+  // ── Morning Brief Card styles ─────────────────────────────────────────────────
+  briefCard: {
+    backgroundColor: '#FFFBF0',
+    borderRadius: Radius.card,
+    borderWidth: 1,
+    borderColor: '#F0D89A',
+    padding: 18,
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  briefHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  briefTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  briefSunIcon: { fontSize: 20 },
+  briefTitle: { fontSize: 16, fontWeight: '700', color: '#7A5200' },
+  briefDismiss: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  briefDismissText: { fontSize: 14, color: Colors.textSecondary },
+  briefText: { fontSize: 14, lineHeight: 22, color: Colors.textPrimary, marginBottom: 14 },
+  briefLoadingRow: { marginBottom: 14 },
+  briefSkeleton: {
+    height: 12, borderRadius: 6, backgroundColor: '#F0D89A',
+    width: '100%', opacity: 0.5,
+  },
+  briefChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 },
+  briefChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#FFF3CC', borderRadius: 20,
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderWidth: 1, borderColor: '#F0D89A',
+  },
+  briefChipEmoji: { fontSize: 12 },
+  briefChipLabel: { fontSize: 11, fontWeight: '600', color: '#7A5200' },
+  briefPlay: {
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.primary, borderRadius: Radius.pill,
+    paddingHorizontal: 18, paddingVertical: 8,
+  },
+  briefPlayText: { fontSize: 13, fontWeight: '700', color: '#F9F9F6' },
+  // ── Wake Word Indicator styles ─────────────────────────────────────────────
   wakeWrap: {
     flexDirection: 'row',
     alignItems: 'center',

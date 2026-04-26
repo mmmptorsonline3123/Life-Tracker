@@ -159,6 +159,9 @@ export const api = {
     return res.json();
   },
 
+  // morning briefing (Claude daily summary)
+  morningBrief: () => request('/morning-brief'),
+
   // insights
   insights: (period: 'week' | 'month' = 'week') => request(`/insights?period=${period}`),
 

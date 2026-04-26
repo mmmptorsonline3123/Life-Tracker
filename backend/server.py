@@ -10,6 +10,7 @@ import os
 import logging
 import tempfile
 import base64
+import asyncio
 import httpx
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -663,6 +664,113 @@ async def history_active_dates(year_month: str, user: dict = Depends(get_current
             if v and v.startswith(year_month):
                 dates.add(v[:10])
     return {"month": year_month, "dates": sorted(list(dates))}
+
+
+# ============== MORNING BRIEF (Claude daily summary) ==============
+
+@api_router.get("/morning-brief")
+async def morning_brief(user: dict = Depends(get_current_user)):
+    """Generate (or return cached) personalized morning briefing via Claude."""
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
+
+    user_id = user["user_id"]
+    today = today_str()
+    yesterday = (now_utc().date() - timedelta(days=1)).isoformat()
+    name = user.get("name") or "there"
+    first_name = name.split()[0] if name != "there" else "there"
+
+    # Return cached brief for today if it exists
+    cached = await db.morning_briefs.find_one({"user_id": user_id, "date": today}, {"_id": 0})
+    if cached:
+        return cached
+
+    # ── Gather data ──────────────────────────────────────────────
+    tasks_today, tasks_y, expenses_today, expenses_y, habits_today, habits_y, \
+        health_today, moods_recent = await asyncio.gather(
+        db.tasks.find({"user_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(100),
+        db.tasks.find({"user_id": user_id, "completed_at": {"$regex": f"^{yesterday}"}}, {"_id": 0}).to_list(50),
+        db.expenses.find({"user_id": user_id, "date": today}, {"_id": 0}).to_list(100),
+        db.expenses.find({"user_id": user_id, "date": yesterday}, {"_id": 0}).to_list(100),
+        db.habit_logs.find_one({"user_id": user_id, "date": today}),
+        db.habit_logs.find_one({"user_id": user_id, "date": yesterday}),
+        db.health_logs.find_one({"user_id": user_id, "date": today}),
+        db.moods.find({"user_id": user_id}, {"_id": 0}).sort("date", -1).to_list(7),
+    )
+
+    tasks_pending   = sum(1 for t in tasks_today if not t.get("done"))
+    tasks_done_today = sum(1 for t in tasks_today if t.get("done") and (t.get("completed_at") or "").startswith(today))
+    spend_yesterday = sum(e.get("amount", 0) for e in expenses_y)
+    spend_today_so_far = sum(e.get("amount", 0) for e in expenses_today)
+    habits_state_y  = habits_y.get("state", {}) if habits_y else {}
+    habits_done_y   = sum(1 for k in HABIT_KEYS if habits_state_y.get(k, False))
+    habits_state_t  = habits_today.get("state", {}) if habits_today else {}
+    habits_done_t   = sum(1 for k in HABIT_KEYS if habits_state_t.get(k, False))
+    water_today     = health_today.get("water", 0) if health_today else 0
+    mood_list       = [m.get("mood") for m in moods_recent if m.get("mood")]
+    mood_trend      = ", ".join(mood_list[:3]) if mood_list else "not logged recently"
+
+    # ── Streak calculation ────────────────────────────────────────
+    streak = 0
+    check_date = now_utc().date()
+    for _ in range(365):
+        h = await db.habit_logs.find_one({"user_id": user_id, "date": check_date.isoformat()})
+        if h and any(h.get("state", {}).values()):
+            streak += 1
+            check_date -= timedelta(days=1)
+        else:
+            break
+
+    # ── Generate briefing with Claude ────────────────────────────
+    data_ctx = (
+        f"User first name: {first_name}\n"
+        f"Today: {today}\n"
+        f"Pending tasks today: {tasks_pending}\n"
+        f"Tasks completed today already: {tasks_done_today}\n"
+        f"Habits done today so far: {habits_done_t}/{len(HABIT_KEYS)}\n"
+        f"Habits done yesterday: {habits_done_y}/{len(HABIT_KEYS)}\n"
+        f"Habit streak: {streak} days\n"
+        f"Yesterday's spending: ₹{spend_yesterday:.0f}\n"
+        f"Today's spending so far: ₹{spend_today_so_far:.0f}\n"
+        f"Water today: {water_today}/8 glasses\n"
+        f"Recent mood (newest first): {mood_trend}\n"
+    )
+    system_msg = (
+        "You are Aura, a warm, upbeat, and encouraging personal AI assistant. "
+        "Generate a personalized morning briefing in exactly 2-3 sentences. "
+        "Use the user's first name once naturally. "
+        "Mention 2-3 specific numbers from their data. "
+        "Be motivating and end with a light action-oriented encouragement for the day. "
+        "Do NOT use markdown, bullet points, or emojis — plain conversational sentences only."
+    )
+    try:
+        chat_obj = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"morning_brief_{user_id}_{today}",
+            system_message=system_msg,
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        brief_text = await chat_obj.send_message(UserMessage(text=f"Generate my morning briefing.\n\n{data_ctx}"))
+    except Exception:
+        logging.exception("Morning brief Claude error")
+        brief_text = (
+            f"Good morning, {first_name}! You have {tasks_pending} task{'s' if tasks_pending != 1 else ''} "
+            f"waiting today and your {streak}-day habit streak is going strong. "
+            f"You spent ₹{spend_yesterday:.0f} yesterday — let's make today even better!"
+        )
+
+    result = {
+        "date": today,
+        "brief": brief_text,
+        "tasks_pending": tasks_pending,
+        "streak": streak,
+        "spend_yesterday": round(spend_yesterday, 0),
+        "habits_done_yesterday": habits_done_y,
+        "habits_total": len(HABIT_KEYS),
+        "mood_today": mood_list[0] if mood_list else None,
+    }
+    # Cache for the day
+    await db.morning_briefs.replace_one({"user_id": user_id, "date": today}, {**result, "user_id": user_id}, upsert=True)
+    return result
 
 
 # ============== CHAT (Claude memory) ==============
