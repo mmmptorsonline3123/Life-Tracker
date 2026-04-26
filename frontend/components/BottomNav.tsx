@@ -11,6 +11,7 @@ import {
   Bell,
   BookOpen,
   Sparkles,
+  Calendar,
 } from 'lucide-react-native';
 import { Colors } from '../src/theme';
 
@@ -22,6 +23,7 @@ const ITEMS = [
   { path: '/health', label: 'Health', icon: HeartPulse, testID: 'nav-health' },
   { path: '/reminders', label: 'Alerts', icon: Bell, testID: 'nav-reminders' },
   { path: '/journal', label: 'Journal', icon: BookOpen, testID: 'nav-journal' },
+  { path: '/calendar', label: 'Calendar', icon: Calendar, testID: 'nav-calendar' },
   { path: '/ai', label: 'Aura', icon: Sparkles, testID: 'nav-ai' },
 ];
 

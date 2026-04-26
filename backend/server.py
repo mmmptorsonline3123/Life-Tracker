@@ -1,14 +1,15 @@
 """
-Aura — Personal AI Assistant Backend
-FastAPI + MongoDB + Claude Sonnet 4.5 (memory) + Whisper (voice transcription)
+Aura — Personal AI Assistant Backend (multi-user)
+FastAPI + MongoDB + Claude Sonnet 4.5 + Whisper + Emergent Google Auth
 """
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Request, Response, Depends
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 import tempfile
+import httpx
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
@@ -30,7 +31,6 @@ EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 app = FastAPI(title="Aura Assistant API")
 api_router = APIRouter(prefix="/api")
 
-USER_ID = "default_user"  # single-user app
 HABIT_KEYS = ["gym", "work_block", "breakfast", "lunch", "dinner", "study"]
 HABIT_LABELS = {
     "gym": "Gym", "work_block": "Work Block", "breakfast": "Breakfast",
@@ -52,6 +52,137 @@ def to_iso(dt) -> str:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.isoformat()
     return str(dt)
+
+
+# ============== AUTH ==============
+
+async def get_current_user(request: Request) -> dict:
+    auth = request.headers.get("Authorization", "")
+    token = None
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+    if not token:
+        token = request.cookies.get("session_token")
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+    sess = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
+    if not sess:
+        raise HTTPException(401, "Invalid session")
+    expires_at = sess["expires_at"]
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now_utc():
+        raise HTTPException(401, "Session expired")
+    user = await db.users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(401, "User not found")
+    return user
+
+
+class SessionRequest(BaseModel):
+    session_id: str
+
+
+@api_router.post("/auth/session")
+async def auth_session(payload: SessionRequest, response: Response):
+    session_id = payload.session_id
+    if not session_id:
+        raise HTTPException(400, "session_id required")
+    try:
+        async with httpx.AsyncClient(timeout=20) as client_http:
+            r = await client_http.get(
+                "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+                headers={"X-Session-ID": session_id},
+            )
+        if r.status_code != 200:
+            raise HTTPException(401, f"Session lookup failed ({r.status_code})")
+        data = r.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.exception("Auth session-data error")
+        raise HTTPException(500, f"Auth lookup failed: {e}")
+
+    email = data.get("email")
+    if not email:
+        raise HTTPException(400, "Email missing in OAuth response")
+
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    if existing:
+        user_id = existing["user_id"]
+        await db.users.update_one(
+            {"user_id": user_id},
+            {"$set": {
+                "name": data.get("name") or existing.get("name"),
+                "picture": data.get("picture") or existing.get("picture"),
+                "last_login": to_iso(now_utc()),
+            }},
+        )
+    else:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        await db.users.insert_one({
+            "user_id": user_id,
+            "email": email,
+            "name": data.get("name"),
+            "picture": data.get("picture"),
+            "created_at": to_iso(now_utc()),
+            "last_login": to_iso(now_utc()),
+        })
+
+    session_token = data.get("session_token") or str(uuid.uuid4())
+    expires_at = now_utc() + timedelta(days=7)
+    await db.user_sessions.insert_one({
+        "user_id": user_id,
+        "session_token": session_token,
+        "expires_at": expires_at,
+        "created_at": now_utc(),
+    })
+
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        max_age=7 * 24 * 60 * 60,
+        path="/",
+        httponly=True,
+        secure=True,
+        samesite="none",
+    )
+
+    return {
+        "user": {
+            "user_id": user_id,
+            "email": email,
+            "name": data.get("name"),
+            "picture": data.get("picture"),
+        },
+        "session_token": session_token,
+    }
+
+
+@api_router.get("/auth/me")
+async def auth_me(user: dict = Depends(get_current_user)):
+    return {
+        "user_id": user["user_id"],
+        "email": user.get("email"),
+        "name": user.get("name"),
+        "picture": user.get("picture"),
+    }
+
+
+@api_router.post("/auth/logout")
+async def auth_logout(request: Request, response: Response):
+    auth = request.headers.get("Authorization", "")
+    token = None
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+    if not token:
+        token = request.cookies.get("session_token")
+    if token:
+        await db.user_sessions.delete_one({"session_token": token})
+    response.delete_cookie("session_token", path="/", samesite="none", secure=True)
+    return {"ok": True}
 
 
 # ============== MODELS ==============
@@ -89,7 +220,7 @@ class Expense(BaseModel):
 
 class ReminderCreate(BaseModel):
     title: str
-    fire_at: str  # ISO timestamp
+    fire_at: str
     repeat: Literal["once", "daily", "weekly"] = "once"
 
 
@@ -116,13 +247,13 @@ class JournalEntry(BaseModel):
 
 
 class HabitToggle(BaseModel):
-    key: str  # gym | work_block | etc
+    key: str
     done: bool
 
 
 class HealthAction(BaseModel):
     action: Literal["water_inc", "water_dec", "calorie_add", "calorie_sub", "workout_toggle"]
-    value: Optional[int] = None  # for calorie_add value e.g. 100, 300
+    value: Optional[int] = None
 
 
 class MoodSet(BaseModel):
@@ -137,10 +268,10 @@ class ChatRequest(BaseModel):
 # ============== TASKS ==============
 
 @api_router.post("/tasks", response_model=Task)
-async def create_task(payload: TaskCreate):
+async def create_task(payload: TaskCreate, user: dict = Depends(get_current_user)):
     doc = {
         "id": str(uuid.uuid4()),
-        "user_id": USER_ID,
+        "user_id": user["user_id"],
         "title": payload.title,
         "priority": payload.priority,
         "done": False,
@@ -152,8 +283,8 @@ async def create_task(payload: TaskCreate):
 
 
 @api_router.get("/tasks", response_model=List[Task])
-async def list_tasks(filter: str = "all"):
-    q = {"user_id": USER_ID}
+async def list_tasks(filter: str = "all", user: dict = Depends(get_current_user)):
+    q = {"user_id": user["user_id"]}
     if filter == "pending":
         q["done"] = False
     elif filter == "done":
@@ -163,14 +294,14 @@ async def list_tasks(filter: str = "all"):
 
 
 @api_router.patch("/tasks/{task_id}/toggle", response_model=Task)
-async def toggle_task(task_id: str):
-    doc = await db.tasks.find_one({"id": task_id, "user_id": USER_ID}, {"_id": 0, "user_id": 0})
+async def toggle_task(task_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.tasks.find_one({"id": task_id, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not doc:
         raise HTTPException(404, "Task not found")
     new_done = not doc["done"]
     completed_at = to_iso(now_utc()) if new_done else None
     await db.tasks.update_one(
-        {"id": task_id},
+        {"id": task_id, "user_id": user["user_id"]},
         {"$set": {"done": new_done, "completed_at": completed_at}},
     )
     doc["done"] = new_done
@@ -179,29 +310,19 @@ async def toggle_task(task_id: str):
 
 
 @api_router.delete("/tasks/{task_id}")
-async def delete_task(task_id: str):
-    res = await db.tasks.delete_one({"id": task_id, "user_id": USER_ID})
+async def delete_task(task_id: str, user: dict = Depends(get_current_user)):
+    res = await db.tasks.delete_one({"id": task_id, "user_id": user["user_id"]})
     return {"deleted": res.deleted_count}
 
 
 # ============== HABITS ==============
 
-@api_router.get("/habits/today")
-async def get_habits_today():
-    date = today_str()
-    doc = await db.habit_logs.find_one({"user_id": USER_ID, "date": date}, {"_id": 0})
-    state = (doc or {}).get("state", {k: False for k in HABIT_KEYS})
-    # ensure all keys present
-    for k in HABIT_KEYS:
-        state.setdefault(k, False)
-
-    # streak: count consecutive days where ALL 6 habits done (going back)
-    streak = 0
-    cursor = await db.habit_logs.find({"user_id": USER_ID}, {"_id": 0}).sort("date", -1).to_list(400)
-    today_all = all(state.get(k, False) for k in HABIT_KEYS)
-    # walk consecutive days backwards
+async def _streak_for(user_id: str, today_state: dict) -> int:
+    cursor = await db.habit_logs.find({"user_id": user_id}, {"_id": 0}).sort("date", -1).to_list(400)
     days = {d["date"]: d.get("state", {}) for d in cursor}
+    streak = 0
     cur = now_utc().date()
+    today_all = all(today_state.get(k, False) for k in HABIT_KEYS)
     if not today_all:
         cur = cur - timedelta(days=1)
     while True:
@@ -212,19 +333,30 @@ async def get_habits_today():
             cur = cur - timedelta(days=1)
         else:
             break
+    return streak
+
+
+@api_router.get("/habits/today")
+async def get_habits_today(user: dict = Depends(get_current_user)):
+    date = today_str()
+    doc = await db.habit_logs.find_one({"user_id": user["user_id"], "date": date}, {"_id": 0})
+    state = (doc or {}).get("state", {k: False for k in HABIT_KEYS})
+    for k in HABIT_KEYS:
+        state.setdefault(k, False)
+    streak = await _streak_for(user["user_id"], state)
     return {"date": date, "state": state, "labels": HABIT_LABELS, "streak": streak}
 
 
 @api_router.post("/habits/toggle")
-async def toggle_habit(payload: HabitToggle):
+async def toggle_habit(payload: HabitToggle, user: dict = Depends(get_current_user)):
     if payload.key not in HABIT_KEYS:
         raise HTTPException(400, "Unknown habit key")
     date = today_str()
-    existing = await db.habit_logs.find_one({"user_id": USER_ID, "date": date}, {"_id": 0})
+    existing = await db.habit_logs.find_one({"user_id": user["user_id"], "date": date}, {"_id": 0})
     state = (existing or {}).get("state", {k: False for k in HABIT_KEYS})
     state[payload.key] = payload.done
     await db.habit_logs.update_one(
-        {"user_id": USER_ID, "date": date},
+        {"user_id": user["user_id"], "date": date},
         {"$set": {"state": state, "updated_at": to_iso(now_utc())}},
         upsert=True,
     )
@@ -234,10 +366,10 @@ async def toggle_habit(payload: HabitToggle):
 # ============== EXPENSES ==============
 
 @api_router.post("/expenses", response_model=Expense)
-async def create_expense(payload: ExpenseCreate):
+async def create_expense(payload: ExpenseCreate, user: dict = Depends(get_current_user)):
     doc = {
         "id": str(uuid.uuid4()),
-        "user_id": USER_ID,
+        "user_id": user["user_id"],
         "description": payload.description,
         "amount": float(payload.amount),
         "category": payload.category,
@@ -250,8 +382,8 @@ async def create_expense(payload: ExpenseCreate):
 
 
 @api_router.get("/expenses", response_model=List[Expense])
-async def list_expenses(date: Optional[str] = None):
-    q = {"user_id": USER_ID}
+async def list_expenses(date: Optional[str] = None, user: dict = Depends(get_current_user)):
+    q = {"user_id": user["user_id"]}
     if date:
         q["date"] = date
     docs = await db.expenses.find(q, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(500)
@@ -259,14 +391,14 @@ async def list_expenses(date: Optional[str] = None):
 
 
 @api_router.delete("/expenses/{exp_id}")
-async def delete_expense(exp_id: str):
-    res = await db.expenses.delete_one({"id": exp_id, "user_id": USER_ID})
+async def delete_expense(exp_id: str, user: dict = Depends(get_current_user)):
+    res = await db.expenses.delete_one({"id": exp_id, "user_id": user["user_id"]})
     return {"deleted": res.deleted_count}
 
 
 @api_router.get("/expenses/today/total")
-async def expenses_today_total():
-    docs = await db.expenses.find({"user_id": USER_ID, "date": today_str()}, {"_id": 0}).to_list(500)
+async def expenses_today_total(user: dict = Depends(get_current_user)):
+    docs = await db.expenses.find({"user_id": user["user_id"], "date": today_str()}, {"_id": 0}).to_list(500)
     total = sum(d["amount"] for d in docs)
     return {"total": total, "count": len(docs)}
 
@@ -274,9 +406,9 @@ async def expenses_today_total():
 # ============== HEALTH ==============
 
 @api_router.get("/health/today")
-async def get_health_today():
+async def get_health_today(user: dict = Depends(get_current_user)):
     date = today_str()
-    doc = await db.health_logs.find_one({"user_id": USER_ID, "date": date}, {"_id": 0})
+    doc = await db.health_logs.find_one({"user_id": user["user_id"], "date": date}, {"_id": 0})
     if not doc:
         return {"date": date, "water": 0, "calories": 0, "workout": False}
     return {
@@ -288,13 +420,12 @@ async def get_health_today():
 
 
 @api_router.post("/health/action")
-async def health_action(payload: HealthAction):
+async def health_action(payload: HealthAction, user: dict = Depends(get_current_user)):
     date = today_str()
-    existing = await db.health_logs.find_one({"user_id": USER_ID, "date": date}, {"_id": 0}) or {}
+    existing = await db.health_logs.find_one({"user_id": user["user_id"], "date": date}, {"_id": 0}) or {}
     water = existing.get("water", 0)
     calories = existing.get("calories", 0)
     workout = existing.get("workout", False)
-
     if payload.action == "water_inc":
         water = min(water + 1, 20)
     elif payload.action == "water_dec":
@@ -305,9 +436,8 @@ async def health_action(payload: HealthAction):
         calories = max(0, calories - (payload.value or 100))
     elif payload.action == "workout_toggle":
         workout = not workout
-
     await db.health_logs.update_one(
-        {"user_id": USER_ID, "date": date},
+        {"user_id": user["user_id"], "date": date},
         {"$set": {"water": water, "calories": calories, "workout": workout, "updated_at": to_iso(now_utc())}},
         upsert=True,
     )
@@ -317,10 +447,10 @@ async def health_action(payload: HealthAction):
 # ============== REMINDERS ==============
 
 @api_router.post("/reminders", response_model=Reminder)
-async def create_reminder(payload: ReminderCreate):
+async def create_reminder(payload: ReminderCreate, user: dict = Depends(get_current_user)):
     doc = {
         "id": str(uuid.uuid4()),
-        "user_id": USER_ID,
+        "user_id": user["user_id"],
         "title": payload.title,
         "fire_at": payload.fire_at,
         "repeat": payload.repeat,
@@ -334,33 +464,33 @@ async def create_reminder(payload: ReminderCreate):
 
 
 @api_router.get("/reminders", response_model=List[Reminder])
-async def list_reminders():
-    docs = await db.reminders.find({"user_id": USER_ID}, {"_id": 0, "user_id": 0, "fired": 0}).sort("fire_at", 1).to_list(500)
+async def list_reminders(user: dict = Depends(get_current_user)):
+    docs = await db.reminders.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0, "fired": 0}).sort("fire_at", 1).to_list(500)
     return [Reminder(**d) for d in docs]
 
 
 @api_router.patch("/reminders/{rid}/done", response_model=Reminder)
-async def mark_reminder_done(rid: str):
-    await db.reminders.update_one({"id": rid, "user_id": USER_ID}, {"$set": {"done": True}})
-    doc = await db.reminders.find_one({"id": rid, "user_id": USER_ID}, {"_id": 0, "user_id": 0, "fired": 0})
+async def mark_reminder_done(rid: str, user: dict = Depends(get_current_user)):
+    await db.reminders.update_one({"id": rid, "user_id": user["user_id"]}, {"$set": {"done": True}})
+    doc = await db.reminders.find_one({"id": rid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0, "fired": 0})
     if not doc:
         raise HTTPException(404, "Not found")
     return Reminder(**doc)
 
 
 @api_router.delete("/reminders/{rid}")
-async def delete_reminder(rid: str):
-    res = await db.reminders.delete_one({"id": rid, "user_id": USER_ID})
+async def delete_reminder(rid: str, user: dict = Depends(get_current_user)):
+    res = await db.reminders.delete_one({"id": rid, "user_id": user["user_id"]})
     return {"deleted": res.deleted_count}
 
 
 # ============== JOURNAL ==============
 
 @api_router.post("/journal", response_model=JournalEntry)
-async def create_journal(payload: JournalCreate):
+async def create_journal(payload: JournalCreate, user: dict = Depends(get_current_user)):
     doc = {
         "id": str(uuid.uuid4()),
-        "user_id": USER_ID,
+        "user_id": user["user_id"],
         "text": payload.text,
         "mood": payload.mood,
         "date": today_str(),
@@ -371,24 +501,24 @@ async def create_journal(payload: JournalCreate):
 
 
 @api_router.get("/journal", response_model=List[JournalEntry])
-async def list_journal():
-    docs = await db.journal.find({"user_id": USER_ID}, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(300)
+async def list_journal(user: dict = Depends(get_current_user)):
+    docs = await db.journal.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(300)
     return [JournalEntry(**d) for d in docs]
 
 
 @api_router.delete("/journal/{jid}")
-async def delete_journal(jid: str):
-    res = await db.journal.delete_one({"id": jid, "user_id": USER_ID})
+async def delete_journal(jid: str, user: dict = Depends(get_current_user)):
+    res = await db.journal.delete_one({"id": jid, "user_id": user["user_id"]})
     return {"deleted": res.deleted_count}
 
 
 # ============== MOOD ==============
 
 @api_router.post("/mood")
-async def set_mood(payload: MoodSet):
+async def set_mood(payload: MoodSet, user: dict = Depends(get_current_user)):
     date = today_str()
     await db.moods.update_one(
-        {"user_id": USER_ID, "date": date},
+        {"user_id": user["user_id"], "date": date},
         {"$set": {"mood": payload.mood, "updated_at": to_iso(now_utc())}},
         upsert=True,
     )
@@ -396,104 +526,159 @@ async def set_mood(payload: MoodSet):
 
 
 @api_router.get("/mood/today")
-async def get_mood_today():
+async def get_mood_today(user: dict = Depends(get_current_user)):
     date = today_str()
-    doc = await db.moods.find_one({"user_id": USER_ID, "date": date}, {"_id": 0})
+    doc = await db.moods.find_one({"user_id": user["user_id"], "date": date}, {"_id": 0})
     return {"date": date, "mood": (doc or {}).get("mood")}
 
 
 # ============== DASHBOARD ==============
 
 @api_router.get("/dashboard")
-async def dashboard():
+async def dashboard(user: dict = Depends(get_current_user)):
+    uid = user["user_id"]
     date = today_str()
-    # tasks
-    all_tasks = await db.tasks.find({"user_id": USER_ID}, {"_id": 0, "user_id": 0}).to_list(500)
+    all_tasks = await db.tasks.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(500)
     pending = [t for t in all_tasks if not t["done"]]
-    done_today = [
-        t for t in all_tasks
-        if t["done"] and t.get("completed_at", "").startswith(date)
-    ]
-    # habits
-    h = await db.habit_logs.find_one({"user_id": USER_ID, "date": date}, {"_id": 0}) or {}
+    done_today = [t for t in all_tasks if t["done"] and (t.get("completed_at") or "").startswith(date)]
+    h = await db.habit_logs.find_one({"user_id": uid, "date": date}, {"_id": 0}) or {}
     state = h.get("state", {})
     habits_done = sum(1 for k in HABIT_KEYS if state.get(k, False))
-    # expenses
-    exp_docs = await db.expenses.find({"user_id": USER_ID, "date": date}, {"_id": 0}).to_list(500)
+    exp_docs = await db.expenses.find({"user_id": uid, "date": date}, {"_id": 0}).to_list(500)
     expense_total = sum(d["amount"] for d in exp_docs)
-    # health
-    health = await db.health_logs.find_one({"user_id": USER_ID, "date": date}, {"_id": 0}) or {}
-    # mood
-    mood = await db.moods.find_one({"user_id": USER_ID, "date": date}, {"_id": 0}) or {}
-    # next reminder
+    health = await db.health_logs.find_one({"user_id": uid, "date": date}, {"_id": 0}) or {}
+    mood = await db.moods.find_one({"user_id": uid, "date": date}, {"_id": 0}) or {}
     upcoming = await db.reminders.find(
-        {"user_id": USER_ID, "done": False, "fire_at": {"$gte": to_iso(now_utc())}},
+        {"user_id": uid, "done": False, "fire_at": {"$gte": to_iso(now_utc())}},
         {"_id": 0, "user_id": 0, "fired": 0},
     ).sort("fire_at", 1).to_list(1)
     next_reminder = upcoming[0] if upcoming else None
-
-    # streak (same logic as habits/today)
-    cursor = await db.habit_logs.find({"user_id": USER_ID}, {"_id": 0}).sort("date", -1).to_list(400)
-    days = {d["date"]: d.get("state", {}) for d in cursor}
-    streak = 0
-    cur = now_utc().date()
-    today_all = all(state.get(k, False) for k in HABIT_KEYS)
-    if not today_all:
-        cur = cur - timedelta(days=1)
-    while True:
-        ds = cur.isoformat()
-        s = days.get(ds, {})
-        if all(s.get(k, False) for k in HABIT_KEYS):
-            streak += 1
-            cur = cur - timedelta(days=1)
-        else:
-            break
-
+    streak = await _streak_for(uid, state)
     return {
         "date": date,
-        "tasks": {
-            "pending": len(pending),
-            "done_today": len(done_today),
-            "total": len(all_tasks),
-        },
+        "tasks": {"pending": len(pending), "done_today": len(done_today), "total": len(all_tasks)},
         "habits": {"done": habits_done, "total": len(HABIT_KEYS)},
         "expenses": {"total": expense_total, "count": len(exp_docs)},
-        "health": {
-            "water": health.get("water", 0),
-            "calories": health.get("calories", 0),
-            "workout": health.get("workout", False),
-        },
+        "health": {"water": health.get("water", 0), "calories": health.get("calories", 0), "workout": health.get("workout", False)},
         "mood": mood.get("mood"),
         "streak": streak,
         "next_reminder": next_reminder,
     }
 
 
+# ============== HISTORY (calendar) ==============
+
+@api_router.get("/history/{date}")
+async def history(date: str, user: dict = Depends(get_current_user)):
+    """Return all data for a specific date (YYYY-MM-DD)."""
+    uid = user["user_id"]
+    # Tasks: created or completed on that date
+    tasks_created = await db.tasks.find(
+        {"user_id": uid, "created_at": {"$regex": f"^{date}"}},
+        {"_id": 0, "user_id": 0},
+    ).to_list(200)
+    tasks_completed = await db.tasks.find(
+        {"user_id": uid, "completed_at": {"$regex": f"^{date}"}},
+        {"_id": 0, "user_id": 0},
+    ).to_list(200)
+    # Dedupe
+    seen_ids = set()
+    tasks = []
+    for t in tasks_created + tasks_completed:
+        if t["id"] in seen_ids:
+            continue
+        seen_ids.add(t["id"])
+        tasks.append(t)
+
+    expenses = await db.expenses.find(
+        {"user_id": uid, "date": date}, {"_id": 0, "user_id": 0}
+    ).sort("created_at", -1).to_list(500)
+    expense_total = sum(e["amount"] for e in expenses)
+
+    habit_log = await db.habit_logs.find_one(
+        {"user_id": uid, "date": date}, {"_id": 0, "user_id": 0}
+    ) or {"state": {}}
+    state = habit_log.get("state", {})
+    habits_done = sum(1 for k in HABIT_KEYS if state.get(k, False))
+
+    health = await db.health_logs.find_one(
+        {"user_id": uid, "date": date}, {"_id": 0, "user_id": 0}
+    ) or {"water": 0, "calories": 0, "workout": False}
+
+    journal = await db.journal.find(
+        {"user_id": uid, "date": date}, {"_id": 0, "user_id": 0}
+    ).sort("created_at", 1).to_list(50)
+
+    mood_doc = await db.moods.find_one({"user_id": uid, "date": date}, {"_id": 0})
+    mood = (mood_doc or {}).get("mood")
+
+    reminders = await db.reminders.find(
+        {"user_id": uid, "fire_at": {"$regex": f"^{date}"}},
+        {"_id": 0, "user_id": 0, "fired": 0},
+    ).sort("fire_at", 1).to_list(100)
+
+    return {
+        "date": date,
+        "tasks": tasks,
+        "tasks_done": sum(1 for t in tasks if t["done"]),
+        "expenses": expenses,
+        "expense_total": expense_total,
+        "habits": {"state": state, "done": habits_done, "total": len(HABIT_KEYS), "labels": HABIT_LABELS},
+        "health": {
+            "water": health.get("water", 0),
+            "calories": health.get("calories", 0),
+            "workout": health.get("workout", False),
+        },
+        "journal": journal,
+        "mood": mood,
+        "reminders": reminders,
+    }
+
+
+@api_router.get("/history/active-dates/{year_month}")
+async def history_active_dates(year_month: str, user: dict = Depends(get_current_user)):
+    """Return list of date strings that have any data, for a given YYYY-MM month."""
+    uid = user["user_id"]
+    dates: set = set()
+    # collect from collections that have a 'date' field
+    for coll in (db.expenses, db.habit_logs, db.health_logs, db.journal, db.moods):
+        cur = await coll.find(
+            {"user_id": uid, "date": {"$regex": f"^{year_month}"}}, {"_id": 0, "date": 1}
+        ).to_list(2000)
+        for d in cur:
+            if d.get("date"):
+                dates.add(d["date"])
+    # tasks (regex on created_at / completed_at)
+    cur = await db.tasks.find(
+        {"user_id": uid, "$or": [
+            {"created_at": {"$regex": f"^{year_month}"}},
+            {"completed_at": {"$regex": f"^{year_month}"}},
+        ]},
+        {"_id": 0, "created_at": 1, "completed_at": 1},
+    ).to_list(2000)
+    for d in cur:
+        for k in ("created_at", "completed_at"):
+            v = d.get(k)
+            if v and v.startswith(year_month):
+                dates.add(v[:10])
+    return {"month": year_month, "dates": sorted(list(dates))}
+
+
 # ============== CHAT (Claude memory) ==============
 
-async def build_memory_context() -> str:
-    """Aggregate the user's data into a compact context string for Claude."""
+async def build_memory_context(user_id: str) -> str:
     today = today_str()
-    # Last 90 days for expenses, 60 for tasks, 30 for journal/habits/health
     cutoff_90 = (now_utc() - timedelta(days=90)).date().isoformat()
     cutoff_30 = (now_utc() - timedelta(days=30)).date().isoformat()
-
-    tasks = await db.tasks.find({"user_id": USER_ID}, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(200)
-    expenses = await db.expenses.find(
-        {"user_id": USER_ID, "date": {"$gte": cutoff_90}}, {"_id": 0, "user_id": 0}
-    ).sort("created_at", -1).to_list(500)
-    habits = await db.habit_logs.find(
-        {"user_id": USER_ID, "date": {"$gte": cutoff_30}}, {"_id": 0, "user_id": 0}
-    ).sort("date", -1).to_list(60)
-    health = await db.health_logs.find(
-        {"user_id": USER_ID, "date": {"$gte": cutoff_30}}, {"_id": 0, "user_id": 0}
-    ).sort("date", -1).to_list(60)
-    journal = await db.journal.find({"user_id": USER_ID}, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(50)
-    reminders = await db.reminders.find({"user_id": USER_ID}, {"_id": 0, "user_id": 0, "fired": 0}).sort("fire_at", 1).to_list(100)
-    moods = await db.moods.find({"user_id": USER_ID}, {"_id": 0, "user_id": 0}).sort("date", -1).to_list(60)
+    tasks = await db.tasks.find({"user_id": user_id}, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(200)
+    expenses = await db.expenses.find({"user_id": user_id, "date": {"$gte": cutoff_90}}, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(500)
+    habits = await db.habit_logs.find({"user_id": user_id, "date": {"$gte": cutoff_30}}, {"_id": 0, "user_id": 0}).sort("date", -1).to_list(60)
+    health = await db.health_logs.find({"user_id": user_id, "date": {"$gte": cutoff_30}}, {"_id": 0, "user_id": 0}).sort("date", -1).to_list(60)
+    journal = await db.journal.find({"user_id": user_id}, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(50)
+    reminders = await db.reminders.find({"user_id": user_id}, {"_id": 0, "user_id": 0, "fired": 0}).sort("fire_at", 1).to_list(100)
+    moods = await db.moods.find({"user_id": user_id}, {"_id": 0, "user_id": 0}).sort("date", -1).to_list(60)
 
     lines = [f"# User Memory (today is {today})", ""]
-
     lines.append("## Tasks")
     if tasks:
         for t in tasks[:50]:
@@ -502,7 +687,6 @@ async def build_memory_context() -> str:
             lines.append(f"- {mark} ({t['priority']}) {t['title']} (created {t['created_at'][:10]}){comp}")
     else:
         lines.append("(none)")
-
     lines.append("\n## Expenses (last 90 days, INR)")
     if expenses:
         for e in expenses[:200]:
@@ -511,7 +695,6 @@ async def build_memory_context() -> str:
         lines.append(f"Total (last 90d): ₹{total:.2f}")
     else:
         lines.append("(none)")
-
     lines.append("\n## Habits (last 30 days)")
     if habits:
         for h in habits:
@@ -519,14 +702,12 @@ async def build_memory_context() -> str:
             lines.append(f"- {h['date']}: {', '.join(done) if done else 'none'}")
     else:
         lines.append("(none)")
-
     lines.append("\n## Health (last 30 days)")
     if health:
         for h in health:
             lines.append(f"- {h['date']}: water {h.get('water',0)}/8 glasses, {h.get('calories',0)} kcal, workout: {h.get('workout',False)}")
     else:
         lines.append("(none)")
-
     lines.append("\n## Journal entries")
     if journal:
         for j in journal[:30]:
@@ -534,14 +715,12 @@ async def build_memory_context() -> str:
             lines.append(f"- {j['date']}{mood}: {j['text'][:200]}")
     else:
         lines.append("(none)")
-
     lines.append("\n## Mood log")
     if moods:
         for m in moods[:30]:
             lines.append(f"- {m['date']}: {m.get('mood')}")
     else:
         lines.append("(none)")
-
     lines.append("\n## Reminders")
     if reminders:
         for r in reminders:
@@ -549,56 +728,48 @@ async def build_memory_context() -> str:
             lines.append(f"- {mark} {r['fire_at']}: {r['title']} ({r['repeat']})")
     else:
         lines.append("(none)")
-
     return "\n".join(lines)
 
 
 @api_router.post("/chat")
-async def chat(payload: ChatRequest):
+async def chat(payload: ChatRequest, user: dict = Depends(get_current_user)):
     if not EMERGENT_LLM_KEY:
         raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
-
-    memory_ctx = await build_memory_context()
+    memory_ctx = await build_memory_context(user["user_id"])
     system_msg = (
-        "You are Aura, a warm and concise personal AI assistant with full memory of the user's life. "
-        "You have access to the user's tasks, habits, expenses, health logs, journal entries, mood, and reminders below. "
-        "Answer questions naturally using this data. Be specific with numbers and dates. "
-        "If asked about totals or ranges, calculate from the data shown. "
-        "Keep responses short (2-4 sentences) unless the user asks for detail. Currency is INR (₹).\n\n"
+        f"You are Aura, a warm and concise personal AI assistant for {user.get('name') or 'the user'}, "
+        f"with full memory of their life. You have access to their tasks, habits, expenses, health logs, "
+        f"journal entries, mood, and reminders below. Answer questions naturally using this data. Be specific "
+        f"with numbers and dates. Keep responses short (2-4 sentences) unless asked for detail. Currency is INR (₹).\n\n"
         f"{memory_ctx}"
     )
-
     chat_obj = LlmChat(
         api_key=EMERGENT_LLM_KEY,
-        session_id=f"{USER_ID}_{payload.session_id}",
+        session_id=f"{user['user_id']}_{payload.session_id}",
         system_message=system_msg,
     ).with_model("anthropic", "claude-sonnet-4-5-20250929")
-
     user_msg = UserMessage(text=payload.message)
     try:
         reply = await chat_obj.send_message(user_msg)
     except Exception as e:
         logging.exception("Chat error")
         raise HTTPException(500, f"Chat failed: {str(e)}")
-
-    # persist message history
     msg_doc = {
         "id": str(uuid.uuid4()),
-        "user_id": USER_ID,
+        "user_id": user["user_id"],
         "session_id": payload.session_id,
         "user_message": payload.message,
         "ai_reply": reply,
         "created_at": to_iso(now_utc()),
     }
     await db.chat_messages.insert_one(msg_doc.copy())
-
     return {"reply": reply, "id": msg_doc["id"]}
 
 
 @api_router.get("/chat/history")
-async def chat_history(session_id: str = "main"):
+async def chat_history(session_id: str = "main", user: dict = Depends(get_current_user)):
     docs = await db.chat_messages.find(
-        {"user_id": USER_ID, "session_id": session_id},
+        {"user_id": user["user_id"], "session_id": session_id},
         {"_id": 0, "user_id": 0},
     ).sort("created_at", 1).to_list(200)
     return docs
@@ -607,17 +778,15 @@ async def chat_history(session_id: str = "main"):
 # ============== TRANSCRIBE (Whisper) ==============
 
 @api_router.post("/transcribe")
-async def transcribe(file: UploadFile = File(...)):
+async def transcribe(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     if not EMERGENT_LLM_KEY:
         raise HTTPException(500, "EMERGENT_LLM_KEY not configured")
-    # save to temp file
     suffix = Path(file.filename or "audio.m4a").suffix or ".m4a"
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     try:
         contents = await file.read()
         tmp.write(contents)
         tmp.close()
-
         stt = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
         with open(tmp.name, "rb") as af:
             response = await stt.transcribe(file=af, model="whisper-1", response_format="json")
@@ -633,11 +802,9 @@ async def transcribe(file: UploadFile = File(...)):
             pass
 
 
-# ============== ROOT ==============
-
 @api_router.get("/")
 async def root():
-    return {"message": "Aura API", "version": "1.0"}
+    return {"message": "Aura API", "version": "2.0"}
 
 
 app.include_router(api_router)

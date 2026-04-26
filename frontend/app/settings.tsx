@@ -2,14 +2,16 @@ import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Check, Volume2, Sparkles } from 'lucide-react-native';
+import { ArrowLeft, Check, Volume2, Sparkles, LogOut, User } from 'lucide-react-native';
 import { Colors, Radius } from '../src/theme';
 import { useVoice } from '../src/VoiceContext';
+import { useAuth } from '../src/AuthContext';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const v = useVoice();
+  const { user, signOut } = useAuth();
   const [previewing, setPreviewing] = useState<string | null>(null);
 
   const englishVoices = (v.voices || []).filter((vc) =>
@@ -33,6 +35,35 @@ export default function SettingsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
+        {/* Account */}
+        {user && (
+          <>
+            <Text style={styles.sectionLabel}>Account</Text>
+            <View style={styles.card} testID="account-card">
+              <View style={styles.row}>
+                <View style={styles.avatar}>
+                  <User size={20} color={Colors.primary} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.rowTitle} numberOfLines={1}>{user.name || 'Signed in'}</Text>
+                  <Text style={styles.rowSub} numberOfLines={1}>{user.email}</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={async () => {
+                  await signOut();
+                  router.replace('/login' as any);
+                }}
+                style={styles.logoutBtn}
+                testID="logout-btn"
+              >
+                <LogOut size={16} color={Colors.terracotta} />
+                <Text style={styles.logoutText}>Sign out</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
         {/* Wake word */}
         <Text style={styles.sectionLabel}>Wake word</Text>
         <View style={styles.card}>
@@ -173,4 +204,14 @@ const styles = StyleSheet.create({
   voiceMeta: { fontSize: 12, color: Colors.textSecondary, marginTop: 4 },
   empty: { padding: 20, alignItems: 'center' },
   emptyText: { color: Colors.textSecondary, fontSize: 13 },
+  avatar: {
+    width: 44, height: 44, borderRadius: 9999,
+    backgroundColor: Colors.surface2, alignItems: 'center', justifyContent: 'center',
+  },
+  logoutBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    marginTop: 14, paddingVertical: 12, borderRadius: Radius.pill,
+    backgroundColor: Colors.surface2,
+  },
+  logoutText: { color: Colors.terracotta, fontWeight: '600', fontSize: 14 },
 });
