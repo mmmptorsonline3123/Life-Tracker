@@ -17,7 +17,7 @@ from datetime import datetime, timezone, timedelta
 import pytest
 import requests
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://personal-ai-hub-62.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://aura-assistant-21.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 PRESEEDED_TOKEN = "test_token_1777209695405"

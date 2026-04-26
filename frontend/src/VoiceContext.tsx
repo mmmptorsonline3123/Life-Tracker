@@ -273,7 +273,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
           if (wakeModeRef.current && !isProcessingRef.current) {
             startRecordingRef.current().catch(() => {});
           }
-        }, 1200);
+        }, 400);
       } else if ((nextState === 'background' || nextState === 'inactive') && Platform.OS === 'ios') {
         // iOS stops background audio — stop cleanly to avoid zombie recording
         if (recState.isRecording) {
@@ -436,15 +436,14 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
       if (!recState.isRecording) return;
       const recordedMs = Date.now() - (recordStartRef.current || Date.now());
       await recorder.stop();
-      // Increase wait — iOS needs time to finalise and flush the M4A container.
-      // 150ms was too short; 400ms is safe on all devices.
-      await new Promise((r) => setTimeout(r, 400));
+      // expo-audio stop() is awaitable — the URI is set immediately after it resolves.
+      // No artificial wait needed.
       const uri = recorder.uri;
 
       if (recordedMs < 500) {
         toastRef.current('Recording too short');
         if (handsFreeRef.current) {
-          setTimeout(() => { startRecordingInternal().catch(() => {}); }, 400);
+          setTimeout(() => { startRecordingInternal().catch(() => {}); }, 100);
         }
         return;
       }
@@ -482,7 +481,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
       isProcessingRef.current = false;
       setIsProcessing(false);
       if (handsFreeRef.current) {
-        setTimeout(() => { startRecordingInternal().catch(() => {}); }, 600);
+        setTimeout(() => { startRecordingInternal().catch(() => {}); }, 100);
       }
     }
   }, [recorder, recState.isRecording, handleParsed, speak, startRecordingInternal]);
